@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Joy Archive with MYY — An Interactive Playground</title>
+<link href="https://fonts.googleapis.com/css2?family=Caprasimo&family=Manrope:wght@400;600;700;800&family=Schoolbell&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ════ PAGE 1 ════ -->
+<div id="page1" class="page active">
+  <div class="deco-layer">
+    <div class="blob" style="width:80px;height:80px;background:var(--blue);top:8%;left:6%;animation-delay:0s;"></div>
+    <div class="blob" style="width:52px;height:52px;background:var(--yellow);top:12%;right:9%;animation-delay:.7s;"></div>
+    <div class="blob" style="width:64px;height:64px;background:var(--pink);bottom:20%;left:8%;animation-delay:1.3s;"></div>
+    <div class="blob" style="width:44px;height:44px;background:var(--orange);bottom:14%;right:7%;animation-delay:.4s;"></div>
+    <div class="blob" style="width:36px;height:36px;background:var(--green);top:45%;left:3%;animation-delay:1.8s;"></div>
+    <div class="blob" style="width:28px;height:28px;background:var(--pink);top:30%;right:5%;animation-delay:2.2s;"></div>
+    <div class="sparkle" style="top:20%;right:18%;animation-delay:0s;color:var(--orange);">✦</div>
+    <div class="sparkle" style="top:16%;right:8%;animation-delay:1s;color:var(--pink);">✦</div>
+    <div class="sparkle" style="bottom:28%;right:20%;animation-delay:.5s;color:var(--blue);">✦</div>
+    <div class="sparkle" style="bottom:22%;right:8%;animation-delay:1.5s;color:var(--yellow);">✦</div>
+    <div class="sparkle" style="top:50%;right:5%;animation-delay:.9s;color:var(--green);font-size:.9rem;">✦</div>
+  </div>
+  <div class="p1-topbar">
+    <span>Joy Archive with MYY</span>
+    <span>2026 — Personal Project</span>
+  </div>
+  <div class="p1-hero">
+    <div class="p1-title-wrap">
+      <div class="p1-row1" id="p1Row1"></div>
+      <div class="p1-row2" id="p1Row2"></div>
+    </div>
+    <div class="p1-sub">for Little Moments of Joy!</div>
+    <button class="p1-enter-btn" onclick="goTo('page2')">Enter Playground</button>
+  </div>
+  <div class="p1-footer">By Tuangrat.MY</div>
+</div>
+
+<!-- ════ PAGE 2 ════ -->
+<div id="page2" class="page">
+  <div class="deco-layer">
+    <div class="blob" style="width:80px;height:80px;background:var(--blue);top:8%;left:6%;animation-delay:0s;"></div>
+    <div class="blob" style="width:52px;height:52px;background:var(--yellow);top:12%;right:9%;animation-delay:.7s;"></div>
+    <div class="blob" style="width:64px;height:64px;background:var(--pink);bottom:20%;left:8%;animation-delay:1.3s;"></div>
+    <div class="blob" style="width:44px;height:44px;background:var(--orange);bottom:14%;right:7%;animation-delay:.4s;"></div>
+    <div class="blob" style="width:36px;height:36px;background:var(--green);top:50%;left:3%;animation-delay:1.8s;"></div>
+    <div class="sparkle" style="top:18%;left:15%;animation-delay:0s;color:var(--orange);">✦</div>
+    <div class="sparkle" style="top:14%;right:18%;animation-delay:1s;color:var(--pink);">✦</div>
+    <div class="sparkle" style="bottom:26%;left:18%;animation-delay:.5s;color:var(--blue);">✦</div>
+    <div class="sparkle" style="bottom:20%;right:15%;animation-delay:1.5s;color:var(--yellow);">✦</div>
+  </div>
+  <button class="p2-back" onclick="goTo('page1')">Return to Home</button>
+  <div class="p2-inner">
+    <div class="p2-label">Choose your experience</div>
+    <button class="project-btn btn-bloomie"  onclick="goTo('page3')">Bloomie Rain</button>
+    <button class="project-btn btn-ibloomie" onclick="goTo('page4')">Interactive Bloomie Rain</button>
+    <button class="project-btn btn-catcher"  onclick="goTo('page5')">Bloomie Rain Catcher</button>
+    <button class="project-btn btn-other">other Project</button>
+  </div>
+  <div class="p2-footer">By Tuangrat.MY</div>
+</div>
+
+<!-- ════ PAGE 3 ════ -->
+<div id="page3" class="page">
+  <div class="p3-header">
+    <button class="p3-back" onclick="goTo('page2')">Return to Joy</button>
+    <div class="p3-title-block">
+      <div class="p3-title" id="p3Title"></div>
+      <div class="p3-subtitle">A Little Rain of Happiness</div>
+    </div>
+    <div class="p3-spacer"></div>
+  </div>
+  <div class="p3-body">
+    <div class="p3-cam-zone">
+      <div id="canvas-wrapper">
+        <div id="loading-overlay">Get ready for a<br>little rain of happiness !</div>
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="mainCanvas"></canvas>
+      </div>
+    </div>
+    <div class="p3-panel">
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="ctrl-label">Density</div>
+        <input type="range" class="styled-range" id="densitySlider" min="30" max="400" value="120">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="ctrl-label">Size</div>
+        <input type="range" class="styled-range" id="sizeSlider" min="30" max="200" value="80">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="ctrl-label">Speed</div>
+        <input type="range" class="styled-range" id="speedSlider" min="2" max="12" value="4">
+      </div>
+      <hr class="ctrl-divider">
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="ctrl-label">Element Shape</div>
+        <div class="shape-grid">
+          <button class="shape-btn active" data-shape="star" title="Star">
+            <svg viewBox="0 0 100 100"><polygon points="50,8 62,35 92,35 68,57 77,84 50,67 23,84 32,57 8,35 38,35" fill="#F296BD"/></svg>
+          </button>
+          <button class="shape-btn" data-shape="heart" title="Heart">
+            <svg viewBox="0 0 56 56"><path d="M28 47 C28 47 7 33 7 19 C7 11.5 12.5 7 19 7 C22.8 7 26.2 9.2 28 12 C29.8 9.2 33.2 7 37 7 C43.5 7 49 11.5 49 19 C49 33 28 47 28 47Z" fill="#F296BD"/></svg>
+          </button>
+          <button class="shape-btn" data-shape="flower" title="Flower">
+            <svg viewBox="0 0 100 100"><circle cx="50" cy="18" r="18" fill="#F296BD"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(72 50 50)"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(144 50 50)"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(216 50 50)"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(288 50 50)"/><circle cx="50" cy="50" r="20" fill="#F296BD"/></svg>
+          </button>
+        </div>
+        <button class="mixed-btn" id="mixedBtn">Mixed</button>
+      </div>
+      <hr class="ctrl-divider">
+      <div class="action-btns">
+        <button class="act-btn act-snap" id="btnSnapshot">Hold This Moment</button>
+        <button class="act-btn act-reset" id="btnReset">Start Fresh</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════ PAGE 4 — Interactive Bloomie Rain ════ -->
+<div id="page4" class="page">
+  <!-- Left: camera zone -->
+  <div class="p4-cam-zone">
+    <video id="p4-video" autoplay playsinline></video>
+    <!-- Layer 1: camera + particles -->
+    <canvas id="p4-canvas"></canvas>
+    <!-- Layer 2: person cutout drawn on top -->
+    <canvas id="p4-person-canvas"></canvas>
+    <!-- Layer 3: hand overlay, NOT mirrored in CSS -->
+    <canvas id="p4-overlay"></canvas>
+
+    <!-- Header overlaid on cam zone -->
+    <div class="p4-header">
+      <button class="p4-back" onclick="goTo('page2')">Return to Joy</button>
+      <div class="p4-title-block">
+        <div class="p4-title" id="p4Title"></div>
+        <div class="p4-subtitle">A little Rain of Happiness</div>
+      </div>
+      <div class="p4-spacer"></div>
+    </div>
+
+    <!-- Loading -->
+    <div id="p4-loading">
+      <div class="load-spinner"></div>
+      <div class="load-title">Starting camera...</div>
+      <div class="load-sub">Show your hand to the camera.<br>Pinch 👆+👍 to click buttons!</div>
+    </div>
+
+    <!-- Hint -->
+    <div id="p4-hint">
+      <div class="hint-dot"></div>
+      Pinch index + thumb to click &nbsp;·&nbsp; Open hand to move
+    </div>
+  </div>
+
+  <!-- Right: HTML control panel -->
+  <div class="p4-panel">
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div class="ctrl-label">Density</div>
+      <input type="range" class="styled-range" id="p4DensitySlider" min="30" max="400" value="120">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div class="ctrl-label">Size</div>
+      <input type="range" class="styled-range" id="p4SizeSlider" min="30" max="200" value="80">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div class="ctrl-label">Speed</div>
+      <input type="range" class="styled-range" id="p4SpeedSlider" min="2" max="12" value="4">
+    </div>
+    <hr class="ctrl-divider">
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div class="ctrl-label">Element Shape</div>
+      <div class="shape-grid" id="p4ShapeGrid">
+        <button class="shape-btn active" data-shape="star" title="Star">
+          <svg viewBox="0 0 100 100"><polygon points="50,8 62,35 92,35 68,57 77,84 50,67 23,84 32,57 8,35 38,35" fill="#F296BD"/></svg>
+        </button>
+        <button class="shape-btn" data-shape="heart" title="Heart">
+          <svg viewBox="0 0 56 56"><path d="M28 47 C28 47 7 33 7 19 C7 11.5 12.5 7 19 7 C22.8 7 26.2 9.2 28 12 C29.8 9.2 33.2 7 37 7 C43.5 7 49 11.5 49 19 C49 33 28 47 28 47Z" fill="#F296BD"/></svg>
+        </button>
+        <button class="shape-btn" data-shape="flower" title="Flower">
+          <svg viewBox="0 0 100 100"><circle cx="50" cy="18" r="18" fill="#F296BD"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(72 50 50)"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(144 50 50)"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(216 50 50)"/><circle cx="50" cy="18" r="18" fill="#F296BD" transform="rotate(288 50 50)"/><circle cx="50" cy="50" r="20" fill="#F296BD"/></svg>
+        </button>
+      </div>
+      <button class="mixed-btn" id="p4MixedBtn">Mixed</button>
+    </div>
+    <hr class="ctrl-divider">
+    <div class="action-btns">
+      <button class="act-btn act-reset" id="p4BtnReset">Start Fresh</button>
+    </div>
+    <div class="p4-credit">By Tuangrat.MY</div>
+  </div>
+</div>
+
+<!-- ════ PAGE 5 — BLOOMIE RAIN CATCHER ════ -->
+<div id="page5" class="page">
+  <video id="p5-video" autoplay playsinline></video>
+  <canvas id="p5-canvas"></canvas>
+  <canvas id="p5-person-canvas"></canvas>
+  <canvas id="p5-overlay"></canvas>
+
+  <!-- Header -->
+  <div class="p5-header">
+    <button class="p5-back" onclick="p5ForceExit()">Return to Joy</button>
+    <div class="p5-title-block">
+      <div class="p5-title" id="p5Title"></div>
+      <div class="p5-subtitle">Catch the blooms before they drift away.</div>
+    </div>
+    <div class="p5-spacer"></div>
+  </div>
+
+  <!-- HUD (shown during game) -->
+  <div id="p5-hud">
+    <div class="p5-hud-box">
+      <div class="p5-hud-label">Bloomie Time</div>
+      <div class="p5-hud-val" id="p5-timer">1:00</div>
+    </div>
+    <div class="p5-hud-box">
+      <div class="p5-hud-label">Bloomies Collected</div>
+      <div class="p5-hud-val" id="p5-score">0</div>
+    </div>
+  </div>
+
+  <!-- Alert text -->
+  <div id="p5-alert"></div>
+
+  <!-- ── Card: Name Input ── -->
+  <div class="p5-card-wrap" id="p5-name-wrap">
+    <div class="p5-card">
+      <div class="p5-card-title">What should we call you?</div>
+      <div class="p5-card-sub">Tell us your name before the Bloomies arrive!</div>
+      <input type="text" id="p5-name-input" placeholder="Enter your name" maxlength="20" autocomplete="off">
+      <button class="p5-card-btn pink" onclick="p5SubmitName()">Continue</button>
+    </div>
+  </div>
+
+  <!-- ── Card: How to Play ── -->
+  <div class="p5-card-wrap" id="p5-howto-wrap" style="display:none;">
+    <div class="p5-card">
+      <div class="p5-card-title">How to Catch Bloomies</div>
+      <ul class="p5-how-list">
+        <li><span class="bullet">1</span><span>Use your <strong>thumb and index finger</strong> to make a pinch gesture.</span></li>
+        <li><span class="bullet">2</span><span>Every pinch <strong>collects</strong> a falling Bloomie near your fingers.</span></li>
+        <li><span class="bullet">3</span><span>You have <strong>60 seconds</strong> to catch as many Bloomies as possible.</span></li>
+        <li><span class="bullet">4</span><span>Don't let them <strong>drift away!</strong></span></li>
+      </ul>
+      <button class="p5-card-btn green" onclick="p5StartCountdown()">Start Catching</button>
+    </div>
+  </div>
+
+  <!-- ── Countdown overlay ── -->
+  <div class="p5-card-wrap" id="p5-countdown-wrap" style="display:none;">
+    <div style="text-align:center;">
+      <div class="p5-num" id="p5-count-num">3</div>
+      <div class="p5-cue"  id="p5-count-cue">Bloomies are on their way...</div>
+    </div>
+  </div>
+
+  <!-- ── Result card ── -->
+  <div class="p5-card-wrap" id="p5-result-wrap" style="display:none;">
+    <div class="p5-card">
+      <div class="p5-card-title" id="p5-result-name">Well Done!</div>
+      <div class="p5-result-score" id="p5-result-score">0</div>
+      <div class="p5-result-label">Bloomies Collected</div>
+      <div class="p5-result-msg" id="p5-result-msg"></div>
+      <div class="p5-result-btns">
+        <button class="p5-card-btn blue"   onclick="p5PlayAgain()">Play Again</button>
+        <button class="p5-card-btn orange" onclick="goTo('page2')">Back to Joy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/games/bloomie-rain.js"></script>
+<script src="js/games/interactive-bloomie-rain.js"></script>
+<script src="js/games/bloomie-rain-catcher.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
