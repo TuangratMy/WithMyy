@@ -238,19 +238,16 @@
     </div>
   </div>
 
-  <!-- ── Card: How to Play ── -->
-  <div class="p5-card-wrap" id="p5-howto-wrap" style="display:none;">
-    <div class="p5-card">
-      <div class="p5-card-title">How to Catch Bloomies</div>
-      <ul class="p5-how-list">
-        <li><span class="bullet">1</span><span>Use your <strong>thumb and index finger</strong> to make a pinch gesture.</span></li>
-        <li><span class="bullet">2</span><span>Every pinch <strong>collects</strong> a falling Bloomie near your fingers.</span></li>
-        <li><span class="bullet">3</span><span>You have <strong>60 seconds</strong> to catch as many Bloomies as possible.</span></li>
-        <li><span class="bullet">4</span><span>Don't let them <strong>drift away!</strong></span></li>
-      </ul>
-      <button class="p5-card-btn green" onclick="p5StartCountdown()">Start Catching</button>
-    </div>
+<!-- ── Card: Name Input ── -->
+<div class="p5-card-wrap" id="p5-name-wrap">
+  <div class="p5-card">
+    <div class="p5-card-title">What should we call you?</div>
+    <div class="p5-card-sub">Tell us your name before the Bloomies arrive!</div>
+    <input type="text" id="p5-name-input" placeholder="Enter your name" maxlength="20" autocomplete="off">
+    <button class="p5-card-btn pink" onclick="p5SubmitName()">Continue</button>
+    <button class="p5-card-btn" onclick="p5Exit()" style="background:transparent;color:#6B4C3B;box-shadow:none;margin-top:-8px;">Return to Joy</button>
   </div>
+</div>
 
   <!-- ── Countdown overlay ── -->
   <div class="p5-card-wrap" id="p5-countdown-wrap" style="display:none;">
