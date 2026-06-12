@@ -218,6 +218,11 @@ function p5Exit(){
   goTo('page2');
 }
 
+/* p5ForceExit — ใช้โดย header button และปุ่ม Return to Joy ในหน้า name card */
+function p5ForceExit(){
+  p5Exit();
+}
+
 function p5RenderLoop(){
   if(!document.getElementById('page5').classList.contains('active')){requestAnimationFrame(p5RenderLoop);return;}
   p5OCtx.clearRect(0,0,p5W,p5H);
