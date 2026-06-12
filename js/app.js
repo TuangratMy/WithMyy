@@ -1,6 +1,5 @@
 /* ══ PAGE NAV + BUILDERS ══ */
 const interactiveTiltsByIndex = [-2,1.5,-1,2,-1.5,1,-2,1.5,-1,2,-1.5];
-
 function buildPage1() {
   const row1=document.getElementById('p1Row1'), row2=document.getElementById('p1Row2');
   if(!row1||row1.dataset.built) return;
@@ -12,7 +11,6 @@ function buildPage1() {
   'Play'.split('').forEach(ch=>{ const s=document.createElement('span'); s.className='wiggle-play p1-play-letter'; s.style.setProperty('--d',(Math.random()*.6).toFixed(2)+'s'); s.textContent=ch; row2.appendChild(s); });
   const g=document.createElement('span'); g.className='p1-word-ground'; g.textContent='ground'; row2.appendChild(g);
 }
-
 function buildWiggleTitle(elId,text) {
   const el=document.getElementById(elId); if(!el||el.dataset.built) return; el.dataset.built='1';
   text.split('').forEach(ch=>{
@@ -20,16 +18,15 @@ function buildWiggleTitle(elId,text) {
     const s=document.createElement('span'); s.className='wiggle-title'; s.style.setProperty('--d',(Math.random()*.8).toFixed(2)+'s'); s.textContent=ch; el.appendChild(s);
   });
 }
-
 function goTo(id) {
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   if(id==='page3'){ buildWiggleTitle('p3Title','Bloomie Rain'); if(!p3CameraStarted) initP3Camera(); }
   if(id==='page4'){ buildWiggleTitle('p4Title','Interactive Bloomie Rain'); if(!p4Started) initPage4(); }
   if(id==='page5'){ buildWiggleTitle('p5Title','Bloomie Rain Catcher'); if(!p5Started) initPage5(); }
+  if(id==='page6'){ buildWiggleTitle('p6Title','Gorgeous Puzzle'); if(!p6Started) initPage6(); }
 }
 buildPage1();
-
 /* Slider track fill — handles all .styled-range */
 function initSlider(r) {
   const isP4 = !!r.closest('#page4');
@@ -39,7 +36,6 @@ function initSlider(r) {
   r.addEventListener('input',upd); upd();
 }
 document.querySelectorAll('.styled-range').forEach(initSlider);
-
 /* ══ SHARED ══ */
 function drawShape(c,shape,color) {
   c.fillStyle=color;
@@ -56,12 +52,10 @@ function drawShape(c,shape,color) {
 }
 const palette=['#99B7F5','#267F53','#F5793B','#F296BD','#FCCA59'];
 const allShapes=['star','heart','flower'];
-
 /* p5ForceExit — "Return to Joy" from Catcher, works at ANY game state */
 function p5ForceExit() {
   p5GameActive=false;
   clearInterval(p5TimerInterval);
-  // Hide all overlays
   ['p5-hud','p5-result-wrap','p5-countdown-wrap','p5-howto-wrap','p5-name-wrap'].forEach(id=>{
     const el=document.getElementById(id);
     if(el) el.style.display='none';
