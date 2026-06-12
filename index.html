@@ -228,16 +228,16 @@
   <!-- Alert text -->
   <div id="p5-alert"></div>
 
-<!-- ── Card: Name Input ── -->
-<div class="p5-card-wrap" id="p5-name-wrap">
-  <div class="p5-card">
-    <div class="p5-card-title">What should we call you?</div>
-    <div class="p5-card-sub">Tell us your name before the Bloomies arrive!</div>
-    <input type="text" id="p5-name-input" placeholder="Enter your name" maxlength="20" autocomplete="off">
-    <button class="p5-card-btn pink" onclick="p5SubmitName()">Continue</button>
-    <button class="p5-card-btn blue" onclick="p5Exit()" style="margin-top:10px;">Return to Joy</button>
+  <!-- ── Card: Name Input ── -->
+  <div class="p5-card-wrap" id="p5-name-wrap">
+    <div class="p5-card">
+      <div class="p5-card-title">What should we call you?</div>
+      <div class="p5-card-sub">Tell us your name before the Bloomies arrive!</div>
+      <input type="text" id="p5-name-input" placeholder="Enter your name" maxlength="20" autocomplete="off">
+      <button class="p5-card-btn pink" onclick="p5SubmitName()">Continue</button>
+      <button class="p5-card-btn blue" onclick="p5ForceExit()" style="margin-top:10px;">Return to Joy</button>
+    </div>
   </div>
-</div>
 
   <!-- ── Card: How to Play ── -->
   <div class="p5-card-wrap" id="p5-howto-wrap" style="display:none;">
@@ -270,7 +270,7 @@
       <div class="p5-result-msg" id="p5-result-msg"></div>
       <div class="p5-result-btns">
         <button class="p5-card-btn blue"   onclick="p5PlayAgain()">Play Again</button>
-        <button class="p5-card-btn orange" onclick="goTo('page2')">Back to Joy</button>
+        <button class="p5-card-btn orange" onclick="p5ForceExit()">Back to Joy</button>
       </div>
     </div>
   </div>
