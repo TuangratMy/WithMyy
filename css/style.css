@@ -66,6 +66,7 @@ html, body { width:100%; height:100%; overflow:hidden; background:var(--cream); 
 .btn-catcher  { background:var(--blue);   color:#fff; } .btn-catcher:hover{opacity:.88;}
 .btn-capsule  { background:var(--green);  color:#fff; } .btn-capsule:hover{opacity:.88;}
 .btn-puzzle   { background:var(--green);  color:#fff; } .btn-puzzle:hover{opacity:.88;}
+.btn-bloom7   { background:var(--orange); color:#fff; } .btn-bloom7:hover{opacity:.88;}
 .btn-other    { background:#fff; color:#d0c8c0; cursor:not-allowed; pointer-events:none; }
 .p2-footer { position:absolute; bottom:20px; z-index:2; font-family:var(--font-b); font-size:.8rem; color:var(--brown); font-weight:600; }
 
@@ -280,3 +281,39 @@ video { display:none; }
 .p5-result-btns .p5-card-btn { margin-top:0; }
 
 /* Catch burst animation on overlay canvas — done in JS */
+
+/* ════ PAGE 7 — FULL OF BLOOMIE (fullscreen, no panel) ════ */
+#page7 { background:#000; position:relative; overflow:hidden; }
+
+#p7-video { display:none; }
+
+/* Camera feed canvas — mirrored in JS draw, fills screen */
+#p7-canvas {
+  position:absolute; inset:0; width:100%; height:100%;
+  display:block;
+}
+/* Person cutout drawn on top of particles so person reads in front */
+#p7-person-canvas {
+  position:absolute; inset:0; width:100%; height:100%;
+  display:block; pointer-events:none;
+}
+
+/* Header overlay — same glass pattern as p4/p5 */
+.p7-header {
+  position:absolute; top:0; left:0; right:0; z-index:10;
+  display:flex; align-items:center; padding:14px 24px; gap:16px;
+  background:rgba(0,0,0,0.35); backdrop-filter:blur(12px);
+  border-bottom:1.5px solid rgba(255,255,255,0.12);
+}
+.p7-back { background:rgba(245,121,59,0.85); color:#fff; font-family:var(--font-b); font-size:.82rem; font-weight:700; padding:9px 18px; border-radius:10px; border:none; cursor:pointer; transition:opacity .15s,transform .1s; white-space:nowrap; }
+.p7-back:hover{opacity:.88;} .p7-back:active{transform:scale(.97);}
+.p7-title-block { flex:1; text-align:center; }
+.p7-title { font-family:var(--font-d); font-size:1.4rem; color:#fff; display:inline-flex; align-items:baseline; gap:0; justify-content:center; text-shadow:0 2px 12px rgba(0,0,0,.4); }
+.p7-title-space { display:inline-block; width:.28em; }
+.p7-subtitle { font-family:var(--font-b); font-size:.75rem; color:rgba(245,121,59,0.95); font-weight:700; letter-spacing:.06em; margin-top:2px; text-align:center; }
+.p7-spacer { width:90px; flex-shrink:0; }
+
+/* Loading overlay — same pattern as p4-loading */
+#p7-loading { position:absolute; inset:0; z-index:20; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; background:rgba(0,0,0,.75); font-family:var(--font-d); color:#fff; text-align:center; }
+#p7-loading .load-title { font-size:1.4rem; color:var(--orange); }
+#p7-loading .load-sub   { font-size:.9rem; color:rgba(255,255,255,.7); line-height:1.6; max-width:300px; }
