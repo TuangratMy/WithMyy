@@ -25,6 +25,7 @@ function goTo(id) {
   if(id==='page4'){ buildWiggleTitle('p4Title','Interactive Bloomie Rain'); if(!p4Started) initPage4(); }
   if(id==='page5'){ buildWiggleTitle('p5Title','Bloomie Rain Catcher'); if(!p5Started) initPage5(); }
   if(id==='page6'){ buildWiggleTitle('p6Title','Gorgeous Puzzle'); if(!p6Started) initPage6(); }
+  if(id==='page7'){ buildWiggleTitle('p7Title','Full of Bloomie'); if(!p7Started) initPage7(); }
 }
 buildPage1();
 /* Slider track fill — handles all .styled-range */
