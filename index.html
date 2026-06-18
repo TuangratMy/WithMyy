@@ -63,6 +63,7 @@
     <button class="project-btn btn-ibloomie" onclick="goTo('page4')">Interactive Bloomie Rain</button>
     <button class="project-btn btn-catcher"  onclick="goTo('page5')">Bloomie Rain Catcher</button>
     <button class="project-btn btn-puzzle"   onclick="goTo('page6')">Gorgeous Puzzle</button>
+    <button class="project-btn btn-bloom7"   onclick="goTo('page7')">Full of Bloomie</button>
     <button class="project-btn btn-other">other Project</button>
   </div>
   <div class="p2-footer">By Tuangrat.MY</div>
@@ -345,10 +346,31 @@
   </div>
 </div>
 
+<!-- ════ PAGE 7 — FULL OF BLOOMIE ════ -->
+<div id="page7" class="page">
+  <video id="p7-video" autoplay playsinline></video>
+  <canvas id="p7-canvas"></canvas>
+  <canvas id="p7-person-canvas"></canvas>
+  <div class="p7-header">
+    <button class="p7-back" onclick="goTo('page2')">Return to Joy</button>
+    <div class="p7-title-block">
+      <div class="p7-title" id="p7Title"></div>
+      <div class="p7-subtitle">Fill your world with blooms</div>
+    </div>
+    <div class="p7-spacer"></div>
+  </div>
+  <div id="p7-loading">
+    <div class="load-spinner"></div>
+    <div class="load-title">Starting camera...</div>
+    <div class="load-sub">Step into frame and<br>let the blooms find you.</div>
+  </div>
+</div>
+
 <script src="js/games/bloomie-rain.js"></script>
 <script src="js/games/interactive-bloomie-rain.js"></script>
 <script src="js/games/bloomie-rain-catcher.js"></script>
 <script src="js/games/gorgeous-puzzle.js"></script>
+<script src="js/pages/page7.js"></script>
 <script src="js/app.js"></script>
 
 </body>
