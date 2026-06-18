@@ -3,7 +3,13 @@
    very beginning and never despawns. No falling, no spawning, no
    score/timer/win condition — purely relaxing play.
 
-   Idle behaviour : gentle organic wander (slowly-turning heading).
+   Idle behaviour : gentle organic wander PLUS a soft "homing" pull
+                     back toward an evenly-spread home point. This is
+                     what keeps the swarm filling the whole screen
+                     instead of drifting into a pile against an edge —
+                     after a hand pushes/pulls a Bloomie around, the
+                     homing force gently brings it back out into open
+                     space once the hand lets go.
    Hand behaviour  : up to 2 hands tracked independently.
                      - slow hand movement  -> nearby Bloomie are gently
                        attracted toward the hand (gather)
@@ -29,18 +35,21 @@ const p7Loading       = document.getElementById('p7-loading');
 let p7Started = false, p7W = 0, p7H = 0;
 
 /* Swarm tuning */
-const P7_COUNT          = 170;   // fixed population, never spawns/despawns
-const P7_SIZE_SCALE      = 1.0;
-const P7_WANDER_SPEED    = 0.55; // idle drift speed (px/frame at 800w baseline)
-const P7_MAX_SPEED       = 6.5;  // hard cap so scatter doesn't fling off-model
-const P7_DAMPING         = 0.94; // velocity decay toward idle each frame
-const P7_GATHER_RADIUS   = 230;
-const P7_SCATTER_RADIUS  = 260;
-const P7_GATHER_STRENGTH = 0.55;
-const P7_SCATTER_STRENGTH= 2.6;
-const P7_SLOW_HAND_SPEED = 9;    // px/frame below this = "slow" (gather)
-const P7_FAST_HAND_SPEED = 26;   // px/frame above this = "fast" (scatter)
-const P7_PERSON_PUSH     = 3.2;  // how hard Bloomie are steered off the body
+const P7_COUNT            = 520;   // fixed population, never spawns/despawns
+const P7_WANDER_SPEED     = 0.55;  // idle drift speed (px/frame at 800w baseline)
+const P7_MAX_SPEED        = 7.5;   // hard cap so scatter doesn't fling off-model
+const P7_DAMPING          = 0.94;  // velocity decay each frame
+const P7_GATHER_RADIUS    = 230;
+const P7_GATHER_RADIUS_SQ = P7_GATHER_RADIUS * P7_GATHER_RADIUS;
+const P7_SCATTER_RADIUS   = 260;
+const P7_SCATTER_RADIUS_SQ= P7_SCATTER_RADIUS * P7_SCATTER_RADIUS;
+const P7_GATHER_STRENGTH  = 0.55;
+const P7_SCATTER_STRENGTH = 2.6;
+const P7_SLOW_HAND_SPEED  = 9;     // px/frame below this = "slow" (gather)
+const P7_FAST_HAND_SPEED  = 26;    // px/frame above this = "fast" (scatter)
+const P7_PERSON_PUSH      = 3.2;   // how hard Bloomie are steered off the body
+const P7_HOME_STRENGTH    = 0.022; // gentle pull back to home point — keeps swarm spread out
+const P7_HOME_JITTER_T    = 0.0035;// how fast each Bloomie's home point itself wanders
 
 /* Mask sampling buffer — low-res for perf, same approach as p3/p4 */
 const P7_MW = 80, P7_MH = 60;
@@ -89,25 +98,48 @@ function onP7HandResults(results) {
   }
 }
 
-/* ─── Bloomie swarm particle ─── */
+/* ─── Bloomie swarm particle ───
+   Each Bloomie gets a "home" position assigned from an evenly-jittered
+   grid (not pure random) so the initial fill has no empty gaps or
+   accidental clusters. A soft homing force constantly nudges it back
+   toward that home — weak enough that hand interaction always wins
+   while a hand is active, but strong enough that within a couple of
+   seconds after the hand lets go, the swarm redistributes itself back
+   across the whole screen instead of piling up wherever it was last
+   pushed. The home point itself also drifts slowly over time so the
+   "resting" layout isn't perfectly static. */
 let p7Particles = [];
+
+const P7_SIZES = [
+  { min: 0.34, max: 0.5 },  // small
+  { min: 0.55, max: 0.8 },  // medium
+  { min: 0.85, max: 1.25 }  // large
+];
+
 class P7Bloomie {
-  constructor() {
+  constructor(homeX, homeY) {
     this.color = palette[Math.floor(Math.random() * palette.length)];
     this.myShape = allShapes[Math.floor(Math.random() * allShapes.length)];
-    this.x = Math.random() * p7W;
-    this.y = Math.random() * p7H;
-    this.scale = (Math.random() * .35 + .5) * P7_SIZE_SCALE * (p7W / 800 || 1);
+    this.x = homeX; this.y = homeY;
+    this.homeX = homeX; this.homeY = homeY;
+
+    /* size variety: pick a size band first, then vary within it, so we
+       reliably get a mix of small/medium/large rather than a uniform blur */
+    const band = P7_SIZES[Math.floor(Math.random() * P7_SIZES.length)];
+    this.baseSize = band.min + Math.random() * (band.max - band.min);
+
     this.angle = Math.random() * Math.PI * 2;
     this.spin = (Math.random() - .5) * .05;
-    /* idle wander heading + velocity — keeps Bloomie alive even with no hands */
     this.heading = Math.random() * Math.PI * 2;
     this.headingSpin = (Math.random() - .5) * 0.04;
     this.vx = Math.cos(this.heading) * P7_WANDER_SPEED;
     this.vy = Math.sin(this.heading) * P7_WANDER_SPEED;
+
+    /* home point drifts in its own slow circle so resting layout breathes */
+    this.homeAngle = Math.random() * Math.PI * 2;
+    this.homeDriftR = 30 + Math.random() * 50;
   }
-  update() {
-    const wScale = p7W / 800 || 1;
+  update(wScale) {
     this.angle += this.spin;
 
     /* idle organic wander: heading slowly turns, gently nudges velocity */
@@ -118,73 +150,115 @@ class P7Bloomie {
     this.vx += (wanderAx - this.vx) * 0.02;
     this.vy += (wanderAy - this.vy) * 0.02;
 
-    /* hand interaction — independent per hand */
-    for (const h of p7HandState) {
+    /* slowly drifting home point — keeps the resting swarm gently alive */
+    this.homeAngle += P7_HOME_JITTER_T;
+    const curHomeX = this.homeX + Math.cos(this.homeAngle) * this.homeDriftR;
+    const curHomeY = this.homeY + Math.sin(this.homeAngle) * this.homeDriftR;
+
+    /* hand interaction — independent per hand. We also track how strongly
+       ANY hand is currently influencing this particle (0 = untouched,
+       1 = fully in a hand's grip) so the homing pull below can back off
+       while a hand is actively playing with it, then snap back to full
+       strength once hands let go. This is what lets gather/scatter feel
+       strong during play while still guaranteeing the swarm redistributes
+       across the whole screen afterward instead of clumping at an edge. */
+    let handInfluence = 0;
+    for (let hi = 0; hi < 2; hi++) {
+      const h = p7HandState[hi];
       if (!h.active) continue;
       const dx = this.x - h.x, dy = this.y - h.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > P7_GATHER_RADIUS_SQ && distSq > P7_SCATTER_RADIUS_SQ) continue; // cheap reject, no sqrt
+      const dist = Math.sqrt(distSq) || 0.0001;
 
       if (h.speed <= P7_SLOW_HAND_SPEED && dist < P7_GATHER_RADIUS) {
-        /* slow hand -> gentle attraction toward hand */
         const t = 1 - dist / P7_GATHER_RADIUS;
         const pull = P7_GATHER_STRENGTH * t * t;
         this.vx -= (dx / dist) * pull;
         this.vy -= (dy / dist) * pull;
+        handInfluence = Math.max(handInfluence, t);
       } else if (h.speed >= P7_FAST_HAND_SPEED && dist < P7_SCATTER_RADIUS) {
-        /* fast hand -> scatter away, biased along the hand's travel direction */
         const t = 1 - dist / P7_SCATTER_RADIUS;
         const push = P7_SCATTER_STRENGTH * t * t;
         const hdx = h.vx / (h.speed || 1), hdy = h.vy / (h.speed || 1);
         this.vx += ((dx / dist) * 0.6 + hdx * 0.4) * push;
         this.vy += ((dy / dist) * 0.6 + hdy * 0.4) * push;
+        handInfluence = Math.max(handInfluence, t);
       } else if (dist < P7_GATHER_RADIUS) {
-        /* medium speed -> light following drift, keeps swarm feeling alive */
         const t = 1 - dist / P7_GATHER_RADIUS;
         this.vx -= (dx / dist) * P7_GATHER_STRENGTH * 0.35 * t;
         this.vy -= (dy / dist) * P7_GATHER_STRENGTH * 0.35 * t;
+        handInfluence = Math.max(handInfluence, t * 0.5);
       }
     }
 
-    /* steer around the player's body instead of hugging it, so Bloomie
-       never sit on top of / cover the person */
+    /* soft homing pull — this is what prevents permanent edge-clumping.
+       Scaled down while a hand is actively influencing this particle so
+       gather/scatter aren't fought, then ramps back to full strength
+       within a moment of the hand releasing it. */
+    const homeMul = 1 - handInfluence * 0.85;
+    this.vx += (curHomeX - this.x) * P7_HOME_STRENGTH * homeMul;
+    this.vy += (curHomeY - this.y) * P7_HOME_STRENGTH * homeMul;
+
+    /* steer around the player's body instead of hugging it */
     if (p7IsPerson(this.x, this.y)) {
       let lx = this.x, rx = this.x;
       while (lx > 0 && p7IsPerson(lx - 1, this.y)) lx--;
       while (rx < p7W - 1 && p7IsPerson(rx + 1, this.y)) rx++;
       const side = (this.x - lx) <= (rx - this.x) ? -1 : 1;
       this.vx += side * P7_PERSON_PUSH * wScale;
-      /* small vertical jitter so a whole column doesn't push the same way */
       this.vy += (Math.random() - .5) * P7_PERSON_PUSH * 0.4;
     }
 
     /* damping keeps motion smooth and prevents runaway speeds */
     this.vx *= P7_DAMPING; this.vy *= P7_DAMPING;
-    const sp = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+    const spSq = this.vx * this.vx + this.vy * this.vy;
     const maxSp = P7_MAX_SPEED * wScale;
-    if (sp > maxSp) { this.vx = (this.vx / sp) * maxSp; this.vy = (this.vy / sp) * maxSp; }
+    if (spSq > maxSp * maxSp) {
+      const sp = Math.sqrt(spSq);
+      this.vx = (this.vx / sp) * maxSp; this.vy = (this.vy / sp) * maxSp;
+    }
 
     this.x += this.vx; this.y += this.vy;
 
-    /* soft bounce off screen edges — Bloomie never leave/respawn */
+    /* hard clamp to screen (homing force keeps this from triggering often) */
     const m = 20;
-    if (this.x < -m) { this.x = -m; this.vx = Math.abs(this.vx) * 0.6; }
-    if (this.x > p7W + m) { this.x = p7W + m; this.vx = -Math.abs(this.vx) * 0.6; }
-    if (this.y < -m) { this.y = -m; this.vy = Math.abs(this.vy) * 0.6; }
-    if (this.y > p7H + m) { this.y = p7H + m; this.vy = -Math.abs(this.vy) * 0.6; }
+    if (this.x < -m) { this.x = -m; this.vx = Math.abs(this.vx) * 0.5; }
+    if (this.x > p7W + m) { this.x = p7W + m; this.vx = -Math.abs(this.vx) * 0.5; }
+    if (this.y < -m) { this.y = -m; this.vy = Math.abs(this.vy) * 0.5; }
+    if (this.y > p7H + m) { this.y = p7H + m; this.vy = -Math.abs(this.vy) * 0.5; }
   }
-  draw(c) {
+  draw(c, wScale) {
     c.save();
     c.translate(this.x, this.y);
     c.rotate(this.angle);
-    c.scale(this.scale, this.scale);
+    const s = this.baseSize * wScale;
+    c.scale(s, s);
     drawShape(c, this.myShape, this.color);
     c.restore();
   }
 }
 
+/* Evenly-jittered grid seeding: divide the screen into a grid with
+   roughly one cell per Bloomie, then place each Bloomie at a random
+   point inside its own cell. This guarantees full, even screen
+   coverage from frame one — pure Math.random() positions can (and did)
+   leave large empty gaps purely by chance. */
 function p7SeedSwarm() {
   p7Particles = [];
-  for (let i = 0; i < P7_COUNT; i++) p7Particles.push(new P7Bloomie());
+  const aspect = p7W / p7H || 16 / 9;
+  let cols = Math.round(Math.sqrt(P7_COUNT * aspect));
+  let rows = Math.ceil(P7_COUNT / cols);
+  const cellW = p7W / cols, cellH = p7H / rows;
+  let made = 0;
+  for (let r = 0; r < rows && made < P7_COUNT; r++) {
+    for (let c = 0; c < cols && made < P7_COUNT; c++) {
+      const hx = c * cellW + Math.random() * cellW;
+      const hy = r * cellH + Math.random() * cellH;
+      p7Particles.push(new P7Bloomie(hx, hy));
+      made++;
+    }
+  }
 }
 
 let p7SelfieSegmentation;
@@ -195,11 +269,15 @@ function resizeP7() {
   p7Canvas.width = p7W; p7Canvas.height = p7H;
   p7PersonCanvas.width = p7W; p7PersonCanvas.height = p7H;
   p7PersonBuf.width = p7W; p7PersonBuf.height = p7H;
-  /* rescale existing Bloomie positions proportionally instead of
-     re-seeding, so the same living swarm persists through resize */
+  /* rescale existing Bloomie positions + home points proportionally
+     instead of re-seeding, so the same living swarm persists through
+     resize without ever "disappearing" */
   if (prevW && prevH && p7Particles.length) {
     const sx = p7W / prevW, sy = p7H / prevH;
-    p7Particles.forEach(p => { p.x *= sx; p.y *= sy; });
+    p7Particles.forEach(p => {
+      p.x *= sx; p.y *= sy;
+      p.homeX *= sx; p.homeY *= sy;
+    });
   }
 }
 
@@ -249,7 +327,11 @@ function onP7SelfieResults(results) {
   p7Ctx.save(); p7Ctx.translate(p7W, 0); p7Ctx.scale(-1, 1);
   p7Ctx.drawImage(results.image, 0, 0, p7W, p7H);
   p7Ctx.restore();
-  p7Particles.forEach(p => { p.update(); p.draw(p7Ctx); });
+  const wScale = p7W / 800 || 1;
+  for (let i = 0; i < p7Particles.length; i++) {
+    p7Particles[i].update(wScale);
+    p7Particles[i].draw(p7Ctx, wScale);
+  }
 
   /* Person drawn on top so the player is always fully visible */
   p7PersonCtx.clearRect(0, 0, p7W, p7H);
