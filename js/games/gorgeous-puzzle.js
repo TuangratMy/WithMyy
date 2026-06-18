@@ -1,49 +1,53 @@
 /* ══════════════════════════════════════════════
    PAGE 6 — GORGEOUS PUZZLE ENGINE
-   Hand tracking: L-shape frame gesture + pinch to capture & drag pieces
+   Flow: L-shape frame (hold steady to lock) → both-hand pinch hold to capture
+         → 3-2-1 countdown → puzzle (snap pieces, keep captured aspect ratio)
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
 let p6W = 0, p6H = 0, p6Started = false;
 
-/* ── MediaPipe ── */
 let p6HandsMp, p6Camera6;
 
-/* ── Game state ── */
-const P6_STATE = { INTRO: 'intro', HOWTO: 'howto', COUNTDOWN: 'countdown', FRAME: 'frame', PUZZLE: 'puzzle', WIN: 'win', LOSE: 'lose' };
+const P6_STATE = { INTRO:'intro', HOWTO:'howto', FRAME:'frame', LOCKED:'locked', CAPTURING:'capturing', COUNTDOWN:'countdown', PUZZLE:'puzzle', WIN:'win', LOSE:'lose' };
 let p6State = P6_STATE.INTRO;
 let p6TimeLeft = 60, p6TimerInterval = null;
 let p6PiecesPlaced = 0;
-const P6_GRID = 3; // 3x3
+const P6_GRID = 3;
 const P6_TOTAL = P6_GRID * P6_GRID;
 
-/* ── Captured image ── */
-let p6CapturedImage = null; // ImageBitmap
+let p6CapturedImage = null; // ImageBitmap, keeps original frame aspect ratio
 
-/* ── Puzzle pieces ── */
-let p6Pieces = [];       // { id, col, row, x, y, w, h, placed, dragging }
-let p6BoardX = 0, p6BoardY = 0, p6BoardSize = 0;
-let p6TrayPieces = [];   // layout refs
+let p6Pieces = [];
+let p6BoardX = 0, p6BoardY = 0, p6BoardW = 0, p6BoardH = 0;
 
-/* ── Hand state ── */
+/* ── Hand smoothing (EMA) ── */
+const P6_SMOOTH = 0.45; // higher = snappier, lower = smoother
 let p6Hands = [
-  { lm: null, pinching: false, lastPinch: false, cx: 0, cy: 0, pinchProgress: 0, cooldown: 0 },
-  { lm: null, pinching: false, lastPinch: false, cx: 0, cy: 0, pinchProgress: 0, cooldown: 0 }
+  { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, pinchProgress:0, cooldown:0, smoothInit:false },
+  { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, pinchProgress:0, cooldown:0, smoothInit:false }
 ];
 let p6DragPiece = null;
 let p6DragHandIdx = -1;
 
-/* ── Frame corners (for capture mode) ── */
-let p6FrameCorners = null; // { tl, tr, bl, br } in canvas coords
-let p6PinchBothFrames = 0; // frames both hands pinched
-const P6_CAPTURE_HOLD = 18; // frames to hold pinch before capture
+/* ── Frame lock state ── */
+let p6FrameBox = null;        // current live box {x,y,w,h} while in FRAME state
+let p6LockedBox = null;       // box once locked (used for capture + puzzle aspect)
+let p6FrameStableFrames = 0;  // how many frames the box has stayed within tolerance
+let p6FrameStableRef = null;  // reference box to compare drift against
+const P6_STABLE_NEEDED = 150; // ~5s at 30fps
+const P6_STABLE_TOLERANCE = 28; // px drift allowed
 
-/* ── Countdown ── */
+/* ── Capture confirm (post-lock pinch) ── */
+let p6CaptureHoldFrames = 0;
+const P6_CAPTURE_HOLD_NEEDED = 15; // short hold ~0.5s at 30fps
+
+/* ── Countdown (now plays AFTER capture, before puzzle) ── */
 const p6CountdownSteps = [
-  { num: '3', cue: 'Get Ready' },
-  { num: '2', cue: 'Frame your best shot.' },
-  { num: '1', cue: 'Almost there.' },
-  { num: 'GO', cue: 'Create your puzzle.', go: true },
+  { num:'3', cue:'Get Ready' },
+  { num:'2', cue:'Frame your best shot.' },
+  { num:'1', cue:'Almost there.' },
+  { num:'GO', cue:'Create your puzzle.', go:true },
 ];
 
 /* ════════════════════════════
@@ -61,12 +65,12 @@ function initPage6() {
   window.addEventListener('resize', p6ResizeCanvases);
 
   p6HandsMp = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-  p6HandsMp.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.6 });
+  p6HandsMp.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.6 });
   p6HandsMp.onResults(p6OnHandResults);
 
   p6Camera6 = new Camera(p6Video, {
     onFrame: async () => { await p6HandsMp.send({ image: p6Video }); },
-    width: 1280, height: 720
+    width:1280, height:720
   });
   p6Camera6.start();
   p6RenderLoop();
@@ -84,20 +88,28 @@ function p6ResizeCanvases() {
 ════════════════════════════ */
 function p6ShowState(state) {
   p6State = state;
-  const ids = ['p6-intro-wrap', 'p6-howto-wrap', 'p6-countdown-wrap', 'p6-hud', 'p6-win-wrap', 'p6-lose-wrap'];
+  const ids = ['p6-intro-wrap','p6-howto-wrap','p6-countdown-wrap','p6-hud','p6-win-wrap','p6-lose-wrap'];
   ids.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
-  if (state === P6_STATE.INTRO)     { document.getElementById('p6-intro-wrap').style.display = 'flex'; }
-  if (state === P6_STATE.HOWTO)     { document.getElementById('p6-howto-wrap').style.display = 'flex'; }
+  if (state === P6_STATE.INTRO)  { document.getElementById('p6-intro-wrap').style.display = 'flex'; }
+  if (state === P6_STATE.HOWTO)  { document.getElementById('p6-howto-wrap').style.display = 'flex'; }
+  if (state === P6_STATE.FRAME)  { p6ResetFrameTracking(); }
   if (state === P6_STATE.COUNTDOWN) { p6RunCountdown(); }
-  if (state === P6_STATE.FRAME)     { /* overlay only, no card */ }
-  if (state === P6_STATE.PUZZLE)    { p6StartPuzzle(); }
-  if (state === P6_STATE.WIN)       { p6ShowWin(); }
-  if (state === P6_STATE.LOSE)      { p6ShowLose(); }
+  if (state === P6_STATE.PUZZLE) { p6StartPuzzle(); }
+  if (state === P6_STATE.WIN)    { p6ShowWin(); }
+  if (state === P6_STATE.LOSE)   { p6ShowLose(); }
+}
+
+function p6ResetFrameTracking() {
+  p6FrameBox = null;
+  p6LockedBox = null;
+  p6FrameStableFrames = 0;
+  p6FrameStableRef = null;
+  p6CaptureHoldFrames = 0;
 }
 
 /* ════════════════════════════
-   COUNTDOWN
+   COUNTDOWN (plays after capture)
 ════════════════════════════ */
 function p6RunCountdown() {
   const wrap = document.getElementById('p6-countdown-wrap');
@@ -113,7 +125,7 @@ function p6RunCountdown() {
     cueEl.textContent = s.cue;
     step++;
     if (step < p6CountdownSteps.length) { setTimeout(tick, 1000); }
-    else { setTimeout(() => { wrap.style.display = 'none'; p6ShowState(P6_STATE.FRAME); }, 900); }
+    else { setTimeout(() => { wrap.style.display = 'none'; p6ShowState(P6_STATE.PUZZLE); }, 900); }
   }
   tick();
 }
@@ -123,151 +135,188 @@ function p6RunCountdown() {
 ════════════════════════════ */
 function p6OnHandResults(results) {
   p6Hands.forEach(h => { h.lm = null; });
-  if (!results.multiHandLandmarks) return;
-  results.multiHandLandmarks.forEach((lm, i) => {
-    if (i > 1) return;
-    const h = p6Hands[i];
-    h.lm = lm;
-    const toC = (lx, ly) => ({ x: (1 - lx) * p6W, y: ly * p6H });
-    const idx = toC(lm[8].x, lm[8].y);
-    const thb = toC(lm[4].x, lm[4].y);
-    h.cx = (idx.x + thb.x) / 2;
-    h.cy = (idx.y + thb.y) / 2;
-    const dx = lm[8].x - lm[4].x, dy = lm[8].y - lm[4].y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    h.pinchProgress = Math.max(0, Math.min(1, 1 - (dist - 0.045) / 0.03));
-    const nowPinch = dist < 0.045;
-    h.pinching = nowPinch;
-    if (h.cooldown > 0) h.cooldown--;
-  });
+  if (results.multiHandLandmarks) {
+    results.multiHandLandmarks.forEach((lm, i) => {
+      if (i > 1) return;
+      const h = p6Hands[i];
+      h.lm = lm;
+      const toC = (lx, ly) => ({ x: (1 - lx) * p6W, y: ly * p6H });
+      const idx = toC(lm[8].x, lm[8].y);
+      const thb = toC(lm[4].x, lm[4].y);
+      h.rawCx = (idx.x + thb.x) / 2;
+      h.rawCy = (idx.y + thb.y) / 2;
 
-  if (p6State === P6_STATE.FRAME) { p6HandleFrameMode(); }
-  if (p6State === P6_STATE.PUZZLE) { p6HandlePuzzleMode(); }
-}
+      // EMA smoothing for cursor / drag position
+      if (!h.smoothInit) { h.cx = h.rawCx; h.cy = h.rawCy; h.smoothInit = true; }
+      else {
+        h.cx = h.cx + (h.rawCx - h.cx) * P6_SMOOTH;
+        h.cy = h.cy + (h.rawCy - h.cy) * P6_SMOOTH;
+      }
 
-/* ── Detect L-shape (thumb+index up, others folded) ── */
-function p6IsLShape(lm) {
-  if (!lm) return false;
-  // index tip (8) above pip (6), thumb tip (4) far from index base (5)
-  const indexUp = lm[8].y < lm[6].y;
-  const middleFolded = lm[12].y > lm[10].y;
-  const ringFolded   = lm[16].y > lm[14].y;
-  const pinkyFolded  = lm[20].y > lm[18].y;
-  return indexUp && middleFolded && ringFolded && pinkyFolded;
+      const dx = lm[8].x - lm[4].x, dy = lm[8].y - lm[4].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      h.pinchProgress = Math.max(0, Math.min(1, 1 - (dist - 0.045) / 0.03));
+      h.pinching = dist < 0.045;
+      if (h.cooldown > 0) h.cooldown--;
+    });
+  }
+
+  if (p6State === P6_STATE.FRAME)  { p6HandleFrameMode(); }
+  if (p6State === P6_STATE.LOCKED) { p6HandleLockedMode(); }
+  if (p6State === P6_STATE.PUZZLE){ p6HandlePuzzleMode(); }
 }
 
 /* ════════════════════════════
-   FRAME MODE
+   FRAME MODE — build box from wrist/palm anchor (stable point, not fingertips)
+   so the box does NOT shrink when the user pinches to confirm.
 ════════════════════════════ */
 function p6HandleFrameMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
-  if (!h0.lm || !h1.lm) { p6FrameCorners = null; p6PinchBothFrames = 0; return; }
+  if (!h0.lm || !h1.lm) { p6FrameBox = null; p6FrameStableFrames = 0; p6FrameStableRef = null; return; }
 
   const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
 
-  // L-shape: use thumb tip of each hand as one corner, index tip as other
-  const thumb0  = toC(h0.lm, 4);
-  const index0  = toC(h0.lm, 8);
-  const thumb1  = toC(h1.lm, 4);
-  const index1  = toC(h1.lm, 8);
+  // Use the WRIST (landmark 0) of each hand as the frame anchor — this point
+  // does not move when thumb/index pinch together, so the box stays put.
+  const wrist0 = toC(h0.lm, 0);
+  const wrist1 = toC(h1.lm, 0);
+  // Also include index fingertip direction so the box still feels hand-shaped,
+  // but anchor size primarily on wrist span + a fixed extension toward fingers.
+  const idx0 = toC(h0.lm, 8);
+  const idx1 = toC(h1.lm, 8);
 
-  // Build bounding box from all 4 fingertips
-  const xs = [thumb0.x, index0.x, thumb1.x, index1.x];
-  const ys = [thumb0.y, index0.y, thumb1.y, index1.y];
+  const xs = [wrist0.x, wrist1.x, idx0.x, idx1.x];
+  const ys = [wrist0.y, wrist1.y, idx0.y, idx1.y];
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
 
-  p6FrameCorners = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  p6FrameBox = { x:minX, y:minY, w:maxX - minX, h:maxY - minY };
 
-  // Capture: both hands pinching
-  const bothPinching = h0.pinching && h1.pinching;
-  if (bothPinching) {
-    p6PinchBothFrames++;
-    if (p6PinchBothFrames >= P6_CAPTURE_HOLD) {
-      p6PinchBothFrames = 0;
-      p6CaptureFrame();
-    }
+  // Stability check — compare to reference box, reset if drifted too much
+  if (!p6FrameStableRef) {
+    p6FrameStableRef = { ...p6FrameBox };
+    p6FrameStableFrames = 1;
   } else {
-    p6PinchBothFrames = 0;
+    const drift = Math.abs(p6FrameBox.x - p6FrameStableRef.x) + Math.abs(p6FrameBox.y - p6FrameStableRef.y)
+                + Math.abs(p6FrameBox.w - p6FrameStableRef.w) + Math.abs(p6FrameBox.h - p6FrameStableRef.h);
+    if (drift < P6_STABLE_TOLERANCE) {
+      p6FrameStableFrames++;
+    } else {
+      p6FrameStableRef = { ...p6FrameBox };
+      p6FrameStableFrames = 1;
+    }
+  }
+
+  if (p6FrameStableFrames >= P6_STABLE_NEEDED && p6FrameBox.w > 80 && p6FrameBox.h > 80) {
+    // Lock it in — average the recent box for a clean lock
+    p6LockedBox = { ...p6FrameBox };
+    p6CaptureHoldFrames = 0;
+    p6ShowState(P6_STATE.LOCKED);
   }
 }
 
-async function p6CaptureFrame() {
-  if (!p6FrameCorners || p6FrameCorners.w < 60 || p6FrameCorners.h < 60) return;
+/* ════════════════════════════
+   LOCKED MODE — box is fixed, wait for both-hand pinch hold to capture
+════════════════════════════ */
+function p6HandleLockedMode() {
+  const h0 = p6Hands[0], h1 = p6Hands[1];
+  const bothPresent = h0.lm && h1.lm;
+  const bothPinching = bothPresent && h0.pinching && h1.pinching;
 
-  // Draw current video frame to offscreen canvas, capture region
+  if (bothPinching) {
+    p6CaptureHoldFrames++;
+    if (p6CaptureHoldFrames >= P6_CAPTURE_HOLD_NEEDED) {
+      p6CaptureHoldFrames = 0;
+      p6DoCapture();
+    }
+  } else {
+    p6CaptureHoldFrames = 0;
+  }
+}
+
+/* ── Reset back to frame mode if the player wants to re-frame ── */
+function p6Reframe() {
+  p6LockedBox = null;
+  p6ShowState(P6_STATE.FRAME);
+}
+
+/* ════════════════════════════
+   CAPTURE — uses the LOCKED box, keeps its real aspect ratio
+════════════════════════════ */
+async function p6DoCapture() {
+  if (!p6LockedBox) return;
+  p6State = P6_STATE.CAPTURING;
+
   const offscreen = document.createElement('canvas');
   offscreen.width = p6Canvas.width;
   offscreen.height = p6Canvas.height;
   const offCtx = offscreen.getContext('2d');
 
-  // Mirror video onto offscreen (same as render)
   offCtx.save();
   offCtx.translate(p6W, 0);
   offCtx.scale(-1, 1);
   offCtx.drawImage(p6Video, 0, 0, p6W, p6H);
   offCtx.restore();
 
-  const { x, y, w, h } = p6FrameCorners;
-  const imgData = offCtx.getImageData(Math.max(0, x), Math.max(0, y), Math.min(w, p6W - x), Math.min(h, p6H - y));
+  const { x, y, w, h } = p6LockedBox;
+  const cx = Math.max(0, Math.round(x));
+  const cy = Math.max(0, Math.round(y));
+  const cw = Math.min(Math.round(w), p6W - cx);
+  const ch = Math.min(Math.round(h), p6H - cy);
+
+  const imgData = offCtx.getImageData(cx, cy, cw, ch);
   const tmp = document.createElement('canvas');
   tmp.width = imgData.width; tmp.height = imgData.height;
   tmp.getContext('2d').putImageData(imgData, 0, 0);
   p6CapturedImage = await createImageBitmap(tmp);
 
-  p6ShowState(P6_STATE.PUZZLE);
+  p6ShowState(P6_STATE.COUNTDOWN);
 }
 
 /* ════════════════════════════
-   PUZZLE SETUP
+   PUZZLE SETUP — board keeps the captured image's real aspect ratio
 ════════════════════════════ */
 function p6StartPuzzle() {
   p6PiecesPlaced = 0;
   p6DragPiece = null;
   p6DragHandIdx = -1;
 
-  // Board: centered square, 55% of shorter dimension
-  const size = Math.min(p6W, p6H) * 0.52;
-  p6BoardSize = size;
-  p6BoardX = (p6W - size) / 2;
-  p6BoardY = (p6H - size) / 2 + 20;
+  // Fit the captured aspect ratio inside ~55% of the shorter screen dimension
+  const maxDim = Math.min(p6W, p6H) * 0.6;
+  const aspect = p6CapturedImage.width / p6CapturedImage.height;
+  let boardW, boardH;
+  if (aspect >= 1) { boardW = maxDim; boardH = maxDim / aspect; }
+  else { boardH = maxDim; boardW = maxDim * aspect; }
 
-  const pw = size / P6_GRID;
-  const ph = size / P6_GRID;
+  p6BoardW = boardW; p6BoardH = boardH;
+  p6BoardX = (p6W - boardW) / 2;
+  p6BoardY = (p6H - boardH) / 2 + 20;
 
-  // Create pieces
+  const pw = boardW / P6_GRID;
+  const ph = boardH / P6_GRID;
+
   p6Pieces = [];
   for (let row = 0; row < P6_GRID; row++) {
     for (let col = 0; col < P6_GRID; col++) {
       const id = row * P6_GRID + col;
-      // Tray: scatter around outside board in a circle
       const angle = (id / P6_TOTAL) * Math.PI * 2;
-      const radius = size * 0.72;
+      const radius = Math.max(boardW, boardH) * 0.78;
       const tx = p6W / 2 + Math.cos(angle) * radius - pw / 2;
       const ty = p6H / 2 + Math.sin(angle) * radius - ph / 2;
       p6Pieces.push({
         id, col, row,
-        x: tx, y: ty,
-        w: pw, h: ph,
-        placed: false,
-        dragging: false,
+        x: tx, y: ty, w: pw, h: ph,
+        placed: false, dragging: false,
         snapX: p6BoardX + col * pw,
         snapY: p6BoardY + row * ph,
       });
     }
   }
-  // Shuffle tray positions a bit
   p6Pieces.forEach(p => {
-    if (!p.placed) {
-      p.x += (Math.random() - 0.5) * pw * 0.4;
-      p.y += (Math.random() - 0.5) * ph * 0.4;
-      // Clamp inside screen
-      p.x = Math.max(10, Math.min(p6W - pw - 10, p.x));
-      p.y = Math.max(80, Math.min(p6H - ph - 10, p.y));
-    }
+    p.x = Math.max(10, Math.min(p6W - pw - 10, p.x + (Math.random() - 0.5) * pw * 0.4));
+    p.y = Math.max(80, Math.min(p6H - ph - 10, p.y + (Math.random() - 0.5) * ph * 0.4));
   });
 
-  // Timer
   p6TimeLeft = 60;
   document.getElementById('p6-hud').style.display = 'flex';
   document.getElementById('p6-hud-timer').textContent = '1:00';
@@ -286,7 +335,7 @@ function p6StartPuzzle() {
 }
 
 /* ════════════════════════════
-   PUZZLE HAND CONTROLS
+   PUZZLE HAND CONTROLS (smoothed cx/cy already EMA'd above)
 ════════════════════════════ */
 const SNAP_RADIUS = 55;
 
@@ -295,7 +344,6 @@ function p6HandlePuzzleMode() {
     if (!h.lm) return;
     const nowPinch = h.pinching;
 
-    // Pinch START → pick up piece
     if (nowPinch && !h.lastPinch && h.cooldown <= 0 && p6DragPiece === null) {
       const hit = p6PieceAt(h.cx, h.cy);
       if (hit && !hit.placed) {
@@ -306,12 +354,10 @@ function p6HandlePuzzleMode() {
       }
     }
 
-    // Dragging
     if (p6DragPiece && p6DragHandIdx === hi) {
       p6DragPiece.x = h.cx - p6DragPiece.w / 2;
       p6DragPiece.y = h.cy - p6DragPiece.h / 2;
 
-      // Pinch RELEASE → try snap
       if (!nowPinch && h.lastPinch) {
         p6TrySnap(p6DragPiece);
         p6DragPiece.dragging = false;
@@ -322,12 +368,10 @@ function p6HandlePuzzleMode() {
     }
 
     h.lastPinch = nowPinch;
-    if (h.cooldown > 0) h.cooldown--;
   });
 }
 
 function p6PieceAt(cx, cy) {
-  // Check in reverse so top-rendered pieces hit first
   for (let i = p6Pieces.length - 1; i >= 0; i--) {
     const p = p6Pieces[i];
     if (p.placed) continue;
@@ -337,15 +381,11 @@ function p6PieceAt(cx, cy) {
 }
 
 function p6TrySnap(piece) {
-  const cx = piece.x + piece.w / 2;
-  const cy = piece.y + piece.h / 2;
-  const snapCx = piece.snapX + piece.w / 2;
-  const snapCy = piece.snapY + piece.h / 2;
+  const cx = piece.x + piece.w / 2, cy = piece.y + piece.h / 2;
+  const snapCx = piece.snapX + piece.w / 2, snapCy = piece.snapY + piece.h / 2;
   const dist = Math.hypot(cx - snapCx, cy - snapCy);
   if (dist < SNAP_RADIUS) {
-    piece.x = piece.snapX;
-    piece.y = piece.snapY;
-    piece.placed = true;
+    piece.x = piece.snapX; piece.y = piece.snapY; piece.placed = true;
     p6PiecesPlaced++;
     document.getElementById('p6-hud-pieces').textContent = p6PiecesPlaced + '/' + P6_TOTAL;
     if (p6PiecesPlaced === P6_TOTAL) {
@@ -363,7 +403,6 @@ function p6RenderLoop() {
     requestAnimationFrame(p6RenderLoop); return;
   }
 
-  // Draw mirrored video to main canvas
   p6Ctx.clearRect(0, 0, p6W, p6H);
   if (p6Video.readyState >= 2) {
     p6Ctx.save();
@@ -375,156 +414,174 @@ function p6RenderLoop() {
 
   p6OCtx.clearRect(0, 0, p6W, p6H);
 
-  if (p6State === P6_STATE.FRAME) { p6DrawFrameMode(); }
-  if (p6State === P6_STATE.PUZZLE) { p6DrawPuzzle(); }
+  if (p6State === P6_STATE.FRAME)  { p6DrawFrameMode(); p6DrawHandCursors(); }
+  if (p6State === P6_STATE.LOCKED) { p6DrawLockedMode(); p6DrawHandCursors(); }
+  if (p6State === P6_STATE.PUZZLE) { p6DrawPuzzle(); p6DrawHandCursors(); }
 
-  p6DrawHandCursors();
   requestAnimationFrame(p6RenderLoop);
 }
 
-/* ── Frame mode overlay ── */
+/* ── Frame mode overlay (live, box can move freely) ── */
 function p6DrawFrameMode() {
-  if (!p6FrameCorners) return;
-  const { x, y, w, h } = p6FrameCorners;
-  if (w < 20 || h < 20) return;
+  if (!p6FrameBox || p6FrameBox.w < 20 || p6FrameBox.h < 20) {
+    p6OCtx.save();
+    p6OCtx.fillStyle = 'rgba(255,255,255,0.9)';
+    p6OCtx.font = `600 ${Math.round(p6W / 60)}px 'Manrope'`;
+    p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'middle';
+    p6OCtx.fillText('Show both hands — make an L-shape with thumb + index', p6W / 2, p6H - 60);
+    p6OCtx.restore();
+    return;
+  }
+  const { x, y, w, h } = p6FrameBox;
 
-  // Dimmed overlay outside frame
   p6OCtx.save();
   p6OCtx.fillStyle = 'rgba(0,0,0,0.45)';
   p6OCtx.fillRect(0, 0, p6W, p6H);
   p6OCtx.clearRect(x, y, w, h);
   p6OCtx.restore();
 
-  // Frame border
-  const bothPinching = p6Hands[0].pinching && p6Hands[1].pinching;
-  const progress = p6PinchBothFrames / P6_CAPTURE_HOLD;
-  const frameColor = bothPinching ? `rgba(39,127,83,${0.7 + progress * 0.3})` : 'rgba(255,255,255,0.85)';
+  const stableProgress = Math.min(1, p6FrameStableFrames / P6_STABLE_NEEDED);
+  const frameColor = `rgba(39,127,83,${0.6 + stableProgress * 0.4})`;
+
   p6OCtx.save();
   p6OCtx.strokeStyle = frameColor;
-  p6OCtx.lineWidth = bothPinching ? 3 + progress * 3 : 3;
+  p6OCtx.lineWidth = 3;
   p6OCtx.strokeRect(x, y, w, h);
 
-  // Corner accents
   const cLen = 24;
-  const corners = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]];
-  const dirs = [[1, 1], [-1, 1], [1, -1], [-1, -1]];
+  const corners = [[x,y],[x+w,y],[x,y+h],[x+w,y+h]];
+  const dirs = [[1,1],[-1,1],[1,-1],[-1,-1]];
   p6OCtx.lineWidth = 4;
-  corners.forEach(([cx, cy], i) => {
-    const [dx, dy] = dirs[i];
-    p6OCtx.beginPath(); p6OCtx.moveTo(cx + dx * cLen, cy); p6OCtx.lineTo(cx, cy); p6OCtx.lineTo(cx, cy + dy * cLen); p6OCtx.stroke();
+  corners.forEach(([cx,cy], i) => {
+    const [dx,dy] = dirs[i];
+    p6OCtx.beginPath(); p6OCtx.moveTo(cx+dx*cLen, cy); p6OCtx.lineTo(cx,cy); p6OCtx.lineTo(cx, cy+dy*cLen); p6OCtx.stroke();
   });
 
-  // Capture progress arc
-  if (bothPinching && progress > 0) {
-    const arcX = x + w / 2, arcY = y + h / 2;
+  // Stability progress ring at center
+  if (stableProgress > 0) {
+    const arcX = x + w/2, arcY = y + h/2;
     p6OCtx.beginPath();
-    p6OCtx.arc(arcX, arcY, 28, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
-    p6OCtx.strokeStyle = 'rgba(39,127,83,0.9)';
+    p6OCtx.arc(arcX, arcY, 30, -Math.PI/2, -Math.PI/2 + Math.PI*2*stableProgress);
+    p6OCtx.strokeStyle = 'rgba(39,127,83,0.95)';
     p6OCtx.lineWidth = 5; p6OCtx.lineCap = 'round'; p6OCtx.stroke();
-    p6OCtx.fillStyle = '#fff'; p6OCtx.font = `bold ${Math.round(p6W / 55)}px 'Manrope'`;
-    p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'middle';
-    p6OCtx.fillText('📸', arcX, arcY);
   }
 
-  // Hint text
-  p6OCtx.fillStyle = 'rgba(255,255,255,0.9)';
-  p6OCtx.font = `600 ${Math.round(p6W / 65)}px 'Manrope'`;
+  p6OCtx.fillStyle = 'rgba(255,255,255,0.95)';
+  p6OCtx.font = `600 ${Math.round(p6W/65)}px 'Manrope'`;
   p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'top';
-  p6OCtx.fillText(bothPinching ? 'Hold to capture…' : 'Pinch both hands to capture', p6W / 2, y + h + 14);
+  p6OCtx.fillText('Hold the frame steady…', p6W/2, y + h + 14);
+  p6OCtx.restore();
+}
+
+/* ── Locked mode overlay (box fixed, waiting for pinch-hold) ── */
+function p6DrawLockedMode() {
+  if (!p6LockedBox) return;
+  const { x, y, w, h } = p6LockedBox;
+
+  p6OCtx.save();
+  p6OCtx.fillStyle = 'rgba(0,0,0,0.45)';
+  p6OCtx.fillRect(0, 0, p6W, p6H);
+  p6OCtx.clearRect(x, y, w, h);
+  p6OCtx.restore();
+
+  p6OCtx.save();
+  p6OCtx.strokeStyle = 'rgba(252,202,89,0.95)';
+  p6OCtx.lineWidth = 3.5;
+  p6OCtx.setLineDash([10,6]);
+  p6OCtx.strokeRect(x, y, w, h);
+  p6OCtx.setLineDash([]);
+
+  const holdProgress = Math.min(1, p6CaptureHoldFrames / P6_CAPTURE_HOLD_NEEDED);
+  if (holdProgress > 0) {
+    const arcX = x + w/2, arcY = y + h/2;
+    p6OCtx.beginPath();
+    p6OCtx.arc(arcX, arcY, 30, -Math.PI/2, -Math.PI/2 + Math.PI*2*holdProgress);
+    p6OCtx.strokeStyle = 'rgba(39,127,83,0.95)';
+    p6OCtx.lineWidth = 5; p6OCtx.lineCap = 'round'; p6OCtx.stroke();
+  }
+
+  p6OCtx.fillStyle = '#fff';
+  p6OCtx.font = `bold ${Math.round(p6W/45)}px 'Manrope'`;
+  p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'top';
+  p6OCtx.fillText('Good to go! Pinch it! 🤏', p6W/2, y + h + 14);
   p6OCtx.restore();
 }
 
 /* ── Puzzle draw ── */
 function p6DrawPuzzle() {
   if (!p6CapturedImage) return;
-  const pw = p6BoardSize / P6_GRID;
-  const ph = p6BoardSize / P6_GRID;
+  const pw = p6BoardW / P6_GRID;
+  const ph = p6BoardH / P6_GRID;
 
-  // Board slots (ghost)
   p6OCtx.save();
   for (let row = 0; row < P6_GRID; row++) {
     for (let col = 0; col < P6_GRID; col++) {
       const id = row * P6_GRID + col;
       const piece = p6Pieces[id];
-      if (piece && piece.placed) continue; // will draw image instead
+      if (piece && piece.placed) continue;
       p6OCtx.strokeStyle = 'rgba(255,255,255,0.25)';
       p6OCtx.lineWidth = 1.5;
-      p6OCtx.strokeRect(p6BoardX + col * pw, p6BoardY + row * ph, pw, ph);
+      p6OCtx.strokeRect(p6BoardX + col*pw, p6BoardY + row*ph, pw, ph);
     }
   }
   p6OCtx.restore();
 
-  // Draw pieces (placed ones on board, tray ones floating)
-  p6Pieces.forEach(piece => {
-    if (piece.dragging) return; // draw on top later
-    p6DrawPiece(piece);
-  });
-  // Draw dragged piece on top
+  p6Pieces.forEach(piece => { if (!piece.dragging) p6DrawPiece(piece); });
   if (p6DragPiece) p6DrawPiece(p6DragPiece);
 }
 
 function p6DrawPiece(piece) {
   const { col, row, x, y, w, h, placed, dragging } = piece;
   p6OCtx.save();
-  if (dragging) {
-    p6OCtx.shadowColor = 'rgba(39,127,83,0.7)';
-    p6OCtx.shadowBlur = 18;
-  } else if (placed) {
-    p6OCtx.shadowColor = 'rgba(0,0,0,0)';
-  }
+  if (dragging) { p6OCtx.shadowColor = 'rgba(39,127,83,0.7)'; p6OCtx.shadowBlur = 18; }
 
-  // Clip to piece rect
   p6OCtx.beginPath();
   p6OCtx.rect(x, y, w, h);
   p6OCtx.clip();
 
-  // Draw the corresponding slice of captured image
   const srcX = (col / P6_GRID) * p6CapturedImage.width;
   const srcY = (row / P6_GRID) * p6CapturedImage.height;
   const srcW = p6CapturedImage.width / P6_GRID;
   const srcH = p6CapturedImage.height / P6_GRID;
   p6OCtx.drawImage(p6CapturedImage, srcX, srcY, srcW, srcH, x, y, w, h);
 
-  // Border
   p6OCtx.strokeStyle = placed ? 'rgba(39,127,83,0.8)' : (dragging ? '#267F53' : 'rgba(255,255,255,0.5)');
   p6OCtx.lineWidth = placed ? 2 : 1.5;
   p6OCtx.strokeRect(x, y, w, h);
 
-  // Placed checkmark
   if (placed) {
     p6OCtx.fillStyle = 'rgba(39,127,83,0.85)';
-    p6OCtx.beginPath(); p6OCtx.arc(x + w - 14, y + 14, 11, 0, Math.PI * 2); p6OCtx.fill();
+    p6OCtx.beginPath(); p6OCtx.arc(x+w-14, y+14, 11, 0, Math.PI*2); p6OCtx.fill();
     p6OCtx.strokeStyle = '#fff'; p6OCtx.lineWidth = 2.5; p6OCtx.lineCap = 'round';
-    p6OCtx.beginPath(); p6OCtx.moveTo(x + w - 19, y + 14); p6OCtx.lineTo(x + w - 14, y + 19); p6OCtx.lineTo(x + w - 8, y + 9); p6OCtx.stroke();
+    p6OCtx.beginPath(); p6OCtx.moveTo(x+w-19, y+14); p6OCtx.lineTo(x+w-14, y+19); p6OCtx.lineTo(x+w-8, y+9); p6OCtx.stroke();
   }
   p6OCtx.restore();
 }
 
-/* ── Hand cursors ── */
+/* ── Hand cursors (smoothed) ── */
 function p6DrawHandCursors() {
   p6Hands.forEach(h => {
     if (!h.lm) return;
     const pf = h.pinchProgress;
-    const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
+    const toC = (lm, idx) => ({ x:(1-lm[idx].x)*p6W, y:lm[idx].y*p6H });
     const idx = toC(h.lm, 8);
     const thb = toC(h.lm, 4);
 
-    // Line between fingertips
     p6OCtx.beginPath(); p6OCtx.moveTo(idx.x, idx.y); p6OCtx.lineTo(thb.x, thb.y);
-    p6OCtx.strokeStyle = `rgba(255,255,255,${0.2 + pf * 0.5})`; p6OCtx.lineWidth = 2; p6OCtx.setLineDash([4, 4]); p6OCtx.stroke(); p6OCtx.setLineDash([]);
+    p6OCtx.strokeStyle = `rgba(255,255,255,${0.2+pf*0.5})`; p6OCtx.lineWidth = 2; p6OCtx.setLineDash([4,4]); p6OCtx.stroke(); p6OCtx.setLineDash([]);
 
     [idx, thb].forEach(tip => {
-      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 20, 0, Math.PI * 2);
-      p6OCtx.fillStyle = `rgba(39,127,83,${0.1 + pf * 0.3})`; p6OCtx.fill();
-      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 20, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pf);
+      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 20, 0, Math.PI*2);
+      p6OCtx.fillStyle = `rgba(39,127,83,${0.1+pf*0.3})`; p6OCtx.fill();
+      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 20, -Math.PI/2, -Math.PI/2+Math.PI*2*pf);
       p6OCtx.strokeStyle = pf > 0.85 ? '#267F53' : 'rgba(255,255,255,0.85)'; p6OCtx.lineWidth = 3; p6OCtx.lineCap = 'round'; p6OCtx.stroke();
-      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 4, 0, Math.PI * 2); p6OCtx.fillStyle = '#fff'; p6OCtx.fill();
+      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 4, 0, Math.PI*2); p6OCtx.fillStyle = '#fff'; p6OCtx.fill();
     });
 
     const R = h.pinching ? 15 : 11;
-    p6OCtx.beginPath(); p6OCtx.arc(h.cx, h.cy, R, 0, Math.PI * 2);
+    p6OCtx.beginPath(); p6OCtx.arc(h.cx, h.cy, R, 0, Math.PI*2);
     p6OCtx.fillStyle = h.pinching ? 'rgba(39,127,83,0.9)' : 'rgba(255,255,255,0.8)'; p6OCtx.fill();
-    p6OCtx.beginPath(); p6OCtx.arc(h.cx, h.cy, R, 0, Math.PI * 2);
+    p6OCtx.beginPath(); p6OCtx.arc(h.cx, h.cy, R, 0, Math.PI*2);
     p6OCtx.strokeStyle = h.pinching ? '#267F53' : 'rgba(255,255,255,0.4)'; p6OCtx.lineWidth = 2; p6OCtx.stroke();
   });
 }
@@ -533,25 +590,23 @@ function p6DrawHandCursors() {
    WIN / LOSE
 ════════════════════════════ */
 function p6ShowWin() {
-  p6ShowState_raw(P6_STATE.WIN);
+  document.getElementById('p6-hud').style.display = 'none';
   document.getElementById('p6-win-wrap').style.display = 'flex';
 }
 function p6ShowLose() {
-  p6ShowState_raw(P6_STATE.LOSE);
-  document.getElementById('p6-lose-pieces').textContent = p6PiecesPlaced;
-  document.getElementById('p6-lose-wrap').style.display = 'flex';
-}
-function p6ShowState_raw(s) {
-  p6State = s;
   document.getElementById('p6-hud').style.display = 'none';
+  document.getElementById('p6-lose-pieces').textContent = p6PiecesPlaced;
+  const inline = document.getElementById('p6-lose-pieces-inline');
+  if (inline) inline.textContent = p6PiecesPlaced;
+  document.getElementById('p6-lose-wrap').style.display = 'flex';
 }
 
 /* ════════════════════════════
    NAVIGATION
 ════════════════════════════ */
-function p6GoIntro()     { clearInterval(p6TimerInterval); p6ShowState(P6_STATE.INTRO); }
-function p6GoHowto()     { p6ShowState(P6_STATE.HOWTO); }
-function p6GoCountdown() { p6ShowState(P6_STATE.COUNTDOWN); }
-function p6CaptureAgain(){ clearInterval(p6TimerInterval); document.getElementById('p6-hud').style.display='none'; p6ShowState(P6_STATE.FRAME); }
-function p6PlayAgain()   { clearInterval(p6TimerInterval); p6ShowState(P6_STATE.COUNTDOWN); }
-function p6ForceExit()   { clearInterval(p6TimerInterval); goTo('page2'); }
+function p6GoIntro()      { clearInterval(p6TimerInterval); p6ShowState(P6_STATE.INTRO); }
+function p6GoHowto()      { p6ShowState(P6_STATE.HOWTO); }
+function p6GoCountdown()  { p6ShowState(P6_STATE.FRAME); } // "Ready" now starts frame mode directly
+function p6CaptureAgain() { clearInterval(p6TimerInterval); document.getElementById('p6-hud').style.display='none'; p6ShowState(P6_STATE.FRAME); }
+function p6PlayAgain()    { clearInterval(p6TimerInterval); p6ShowState(P6_STATE.FRAME); }
+function p6ForceExit()    { clearInterval(p6TimerInterval); goTo('page2'); }
