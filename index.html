@@ -64,7 +64,7 @@
     <button class="project-btn btn-catcher"  onclick="goTo('page5')">Bloomie Rain Catcher</button>
     <button class="project-btn btn-puzzle"   onclick="goTo('page6')">Gorgeous Puzzle</button>
     <button class="project-btn btn-bloom7"   onclick="goTo('page7')">Full of Bloomie</button>
-    <button class="project-btn btn-other">other Project</button>
+    <button class="project-btn btn-airdraw"  onclick="goTo('page8')">Air Draw</button>
   </div>
   <div class="p2-footer">By Tuangrat.MY</div>
 </div>
@@ -366,11 +366,77 @@
   </div>
 </div>
 
+<!-- ════ PAGE 8 — AIR DRAW ════ -->
+<div id="page8" class="page">
+  <!-- Header -->
+  <div class="p8-header">
+    <button class="p8-back" onclick="p8ForceExit()">◀ Return to Joy</button>
+    <div class="p8-title-block">
+      <div class="p8-title">Air Draw</div>
+      <div class="p8-subtitle">Turn the air into your canvas</div>
+    </div>
+    <div class="p8-spacer"></div>
+  </div>
+
+  <!-- Body -->
+  <div class="p8-body">
+    <!-- Draw zone -->
+    <div class="p8-draw-zone" id="p8-draw-zone">
+      <video id="p8-video" autoplay playsinline></video>
+      <canvas id="p8-canvas"></canvas>
+
+      <!-- Camera permission card -->
+      <div id="p8-cam-wrap">
+        <div class="p8-cam-card">
+          <div class="p8-cam-icon">📷</div>
+          <div class="p8-cam-title">Ready to draw in the air?</div>
+          <div class="p8-cam-sub">We need your camera to track your hand.<br>Point your index finger to paint — pinch index + thumb to move strokes.</div>
+          <button class="p8-cam-btn" onclick="p8StartCamera()">Open Camera &amp; Start</button>
+        </div>
+      </div>
+
+      <!-- Loading -->
+      <div id="p8-loading">
+        <div class="load-spinner"></div>
+        <div class="load-title">Starting camera...<br>Show your hand to begin!</div>
+      </div>
+    </div>
+
+    <!-- Right panel -->
+    <div class="p8-panel">
+      <!-- Size -->
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="ctrl-label">Size</div>
+        <input type="range" class="styled-range" id="p8-size-slider" min="4" max="40" value="12">
+      </div>
+
+      <!-- Paint / Eraser -->
+      <div class="p8-mode-row">
+        <button class="p8-mode-btn active" id="p8-btn-paint">Paint</button>
+        <button class="p8-mode-btn" id="p8-btn-eraser">Eraser</button>
+      </div>
+
+      <!-- Colors -->
+      <hr class="ctrl-divider">
+      <div class="ctrl-label">Colors</div>
+      <div class="p8-color-grid" id="p8-color-grid"></div>
+
+      <!-- Actions -->
+      <hr class="ctrl-divider">
+      <div class="p8-action-row">
+        <button class="p8-act-btn p8-btn-clear" id="p8-btn-clear">Clear</button>
+        <button class="p8-act-btn p8-btn-save"  id="p8-btn-save">Save Drawing</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="js/games/bloomie-rain.js"></script>
 <script src="js/games/interactive-bloomie-rain.js"></script>
 <script src="js/games/bloomie-rain-catcher.js"></script>
 <script src="js/games/gorgeous-puzzle.js"></script>
 <script src="js/pages/page7.js"></script>
+<script src="js/games/air-draw.js"></script>
 <script src="js/app.js"></script>
 
 </body>
