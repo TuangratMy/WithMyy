@@ -1,38 +1,7 @@
 /* ══════════════════ PAGE 7 ENGINE — FULL OF BLOOMIE ══════════════════
-   Concept: a living swarm of Bloomie that exists on screen from the
-   very beginning and never despawns. No falling, no spawning, no
-   score/timer/win condition — purely relaxing play.
-
-   Idle behaviour : gentle organic wander PLUS a soft "homing" pull
-                     back toward an evenly-spread home point. This is
-                     what keeps the swarm filling the whole screen
-                     instead of drifting into a pile against an edge —
-                     after a hand pushes/pulls a Bloomie around, the
-                     homing force gently brings it back out into open
-                     space once the hand lets go.
-   Hand behaviour  : up to 2 hands tracked independently.
-                     - slow hand movement  -> nearby Bloomie are gently
-                       attracted toward the hand (gather)
-                     - fast hand movement  -> nearby Bloomie are pushed
-                       away along the hand's travel direction (scatter)
-   Physical collisions: Bloomie behave like solid balls in a box —
-                     Circle-Circle Collision Detection + Resolution
-                     (overlapping Bloomie are separated and bounce off
-                     each other with a strong elastic response) plus
-                     Boundary Collision / Wall Bounce (hitting a screen
-                     edge reflects velocity instead of just clamping
-                     position). A uniform spatial grid keeps this fast
-                     with 500+ particles by only testing pairs that are
-                     actually near each other instead of every pair.
-   Person visibility: SelfieSegmentation still draws the camera + person
-                     cutout on top (so the player is always visible), but
-                     instead of "hugging" the body like Page 3/4, Bloomie
-                     near the body are steered AROUND it so they never
-                     cover the player's face/body.
-
-   Architecture (same layer pattern as Page 4):
-   - p7Canvas: mirrored camera feed + swarm particles
-   - p7PersonCanvas: person cutout drawn on top (in front of particles)
+   Bloomie float and fill the whole screen.
+   When the person moves, Bloomie near the body bounce away.
+   Bloomie slowly drift back to fill the screen again when still.
 ══════════════════════════════════════════════════ */
 const p7Video        = document.getElementById('p7-video');
 const p7Canvas        = document.getElementById('p7-canvas');
@@ -43,47 +12,66 @@ const p7Loading       = document.getElementById('p7-loading');
 
 let p7Started = false, p7W = 0, p7H = 0;
 
-/* Swarm tuning */
-const P7_COUNT            = 520;   // fixed population, never spawns/despawns
-const P7_WANDER_SPEED     = 0.55;  // idle drift speed (px/frame at 800w baseline)
-const P7_MAX_SPEED        = 7.5;   // hard cap so scatter doesn't fling off-model
-const P7_DAMPING          = 0.94;  // velocity decay each frame
-const P7_GATHER_RADIUS    = 230;
-const P7_GATHER_RADIUS_SQ = P7_GATHER_RADIUS * P7_GATHER_RADIUS;
-const P7_SCATTER_RADIUS   = 260;
-const P7_SCATTER_RADIUS_SQ= P7_SCATTER_RADIUS * P7_SCATTER_RADIUS;
-const P7_GATHER_STRENGTH  = 0.55;
-const P7_SCATTER_STRENGTH = 2.6;
-const P7_SLOW_HAND_SPEED  = 9;     // px/frame below this = "slow" (gather)
-const P7_FAST_HAND_SPEED  = 26;    // px/frame above this = "fast" (scatter)
-const P7_PERSON_PUSH      = 3.2;   // how hard Bloomie are steered off the body
-const P7_HOME_STRENGTH    = 0.022; // gentle pull back to home point — keeps swarm spread out
-const P7_HOME_JITTER_T    = 0.0035;// how fast each Bloomie's home point itself wanders
+/* ─── Swarm tuning ─── */
+const P7_COUNT         = 180;
+const P7_WANDER_SPEED  = 0.4;
+const P7_MAX_SPEED     = 10;
+const P7_DAMPING       = 0.90;
+const P7_HOME_STRENGTH = 0.018;
+const P7_HOME_JITTER_T = 0.003;
+const P7_BODY_PUSH     = 7.0;    // how hard bloomie bounce off body
+const P7_BODY_RADIUS   = 55;     // px — how far from body edge to start pushing
 
-/* Physical collision tuning — "real ball in a box" feel */
-const P7_COLLISION_RADIUS_MUL = 16;   // visual shape radius ~= baseSize * this (matches drawShape's ~18-20px star/flower extents)
-const P7_RESTITUTION           = 0.92; // bounce energy retained on collision (1 = perfectly elastic). Strong & bouncy per request.
-const P7_WALL_RESTITUTION      = 0.85; // slightly softer wall bounce so the swarm doesn't feel like a pinball machine
-const P7_COLLISION_ITERATIONS  = 2;    // resolve passes per frame — keeps dense clusters from visibly overlapping
-
-/* Mask sampling buffer — low-res for perf, same approach as p3/p4 */
-const P7_MW = 80, P7_MH = 60;
-const p7SampC = document.createElement('canvas'); p7SampC.width = P7_MW; p7SampC.height = P7_MH;
+/* ─── Mask sampling — low-res for perf ─── */
+const P7_MW = 60, P7_MH = 45;
+const p7SampC = document.createElement('canvas');
+p7SampC.width = P7_MW; p7SampC.height = P7_MH;
 const p7SampX = p7SampC.getContext('2d');
-let p7MaskData = null;
-const p7PersonBuf = document.createElement('canvas');
+
+/* Previous frame mask — used to detect body movement */
+let p7PrevMask   = null;
+let p7CurrMask   = null;
+let p7BodyMoving = 0; // 0–1 intensity, decays each frame
+
+/* person cutout buffer */
+const p7PersonBuf    = document.createElement('canvas');
 const p7PersonBufCtx = p7PersonBuf.getContext('2d');
 
 function p7IsPerson(cx, cy) {
-  if (!p7MaskData || cx < 0 || cy < 0 || cx >= p7W || cy >= p7H) return false;
-  /* Canvas is drawn mirrored, so flip x back to match raw mask coords */
-  const mx = p7W - 1 - cx;
-  return p7MaskData[(Math.floor((cy / p7H) * P7_MH) * P7_MW + Math.floor((mx / p7W) * P7_MW)) * 4] > 100;
+  if (!p7CurrMask || cx < 0 || cy < 0 || cx >= p7W || cy >= p7H) return false;
+  const mx = p7W - 1 - cx; // canvas is mirrored, flip back
+  const mi = (Math.floor((cy / p7H) * P7_MH) * P7_MW + Math.floor((mx / p7W) * P7_MW)) * 4;
+  return p7CurrMask[mi] > 80;
 }
 
-/* ─── Hands: up to 2, tracked independently ─── */
+/* Sample points around a bloomie and return the average push direction away from body */
+function p7BodyPushVec(bx, by, wScale) {
+  const r = P7_BODY_RADIUS * wScale;
+  const steps = 8;
+  let pushX = 0, pushY = 0, hits = 0;
+  for (let i = 0; i < steps; i++) {
+    const angle = (i / steps) * Math.PI * 2;
+    const sx = bx + Math.cos(angle) * r * 0.5;
+    const sy = by + Math.sin(angle) * r * 0.5;
+    if (p7IsPerson(sx, sy)) {
+      pushX += Math.cos(angle + Math.PI);
+      pushY += Math.sin(angle + Math.PI);
+      hits++;
+    }
+  }
+  if (hits === 0 && !p7IsPerson(bx, by)) return null;
+  // If center is inside body, push in a random outward direction
+  if (hits === 0) {
+    const angle = Math.random() * Math.PI * 2;
+    return { x: Math.cos(angle), y: Math.sin(angle), t: 1 };
+  }
+  const mag = Math.sqrt(pushX * pushX + pushY * pushY) || 1;
+  const t = Math.min(1, hits / (steps * 0.5));
+  return { x: pushX / mag, y: pushY / mag, t };
+}
+
+/* ─── Hand tracking (optional extra interaction) ─── */
 let p7Hands, p7Camera;
-/* hand[i] = {x,y,vx,vy,speed,active} in canvas (mirrored) coordinates */
 let p7HandState = [
   { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false },
   { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false }
@@ -93,8 +81,8 @@ function onP7HandResults(results) {
   const seen = [false, false];
   if (results.multiHandLandmarks) {
     for (let i = 0; i < Math.min(2, results.multiHandLandmarks.length); i++) {
-      const lm = results.multiHandLandmarks[i][9]; // middle-finger MCP ~= palm center
-      const nx = (1 - lm.x) * p7W; // mirror to match mirrored canvas
+      const lm = results.multiHandLandmarks[i][9];
+      const nx = (1 - lm.x) * p7W;
       const ny = lm.y * p7H;
       const h = p7HandState[i];
       if (h.active) {
@@ -113,164 +101,134 @@ function onP7HandResults(results) {
   }
 }
 
-/* ─── Bloomie swarm particle ───
-   Each Bloomie gets a "home" position assigned from an evenly-jittered
-   grid (not pure random) so the initial fill has no empty gaps or
-   accidental clusters. A soft homing force constantly nudges it back
-   toward that home — weak enough that hand interaction always wins
-   while a hand is active, but strong enough that within a couple of
-   seconds after the hand lets go, the swarm redistributes itself back
-   across the whole screen instead of piling up wherever it was last
-   pushed. The home point itself also drifts slowly over time so the
-   "resting" layout isn't perfectly static. */
+/* ─── Bloomie particle ─── */
 let p7Particles = [];
 
 const P7_SIZES = [
-  { min: 0.34, max: 0.5 },  // small
-  { min: 0.55, max: 0.8 },  // medium
-  { min: 0.85, max: 1.25 }  // large
+  { min: 0.5, max: 0.8  },
+  { min: 0.9, max: 1.3  },
+  { min: 1.4, max: 2.0  }
 ];
 
 class P7Bloomie {
   constructor(homeX, homeY) {
-    this.color = palette[Math.floor(Math.random() * palette.length)];
-    this.myShape = allShapes[Math.floor(Math.random() * allShapes.length)];
-    this.x = homeX; this.y = homeY;
-    this.homeX = homeX; this.homeY = homeY;
+    this.color    = palette[Math.floor(Math.random() * palette.length)];
+    this.myShape  = allShapes[Math.floor(Math.random() * allShapes.length)];
+    this.x        = homeX;
+    this.y        = homeY;
+    this.homeX    = homeX;
+    this.homeY    = homeY;
 
-    /* size variety: pick a size band first, then vary within it, so we
-       reliably get a mix of small/medium/large rather than a uniform blur */
-    const band = P7_SIZES[Math.floor(Math.random() * P7_SIZES.length)];
+    const band    = P7_SIZES[Math.floor(Math.random() * P7_SIZES.length)];
     this.baseSize = band.min + Math.random() * (band.max - band.min);
-    /* collision radius in screen px — recomputed on resize via wScale in update/draw,
-       but we keep a baseline here and scale it live where it's used */
-    this.collisionR = this.baseSize * P7_COLLISION_RADIUS_MUL;
 
-    this.angle = Math.random() * Math.PI * 2;
-    this.spin = (Math.random() - .5) * .05;
-    this.heading = Math.random() * Math.PI * 2;
-    this.headingSpin = (Math.random() - .5) * 0.04;
-    this.vx = Math.cos(this.heading) * P7_WANDER_SPEED;
-    this.vy = Math.sin(this.heading) * P7_WANDER_SPEED;
+    this.angle       = Math.random() * Math.PI * 2;
+    this.spin        = (Math.random() - 0.5) * 0.04;
+    this.heading     = Math.random() * Math.PI * 2;
+    this.headingSpin = (Math.random() - 0.5) * 0.03;
+    this.vx          = Math.cos(this.heading) * P7_WANDER_SPEED;
+    this.vy          = Math.sin(this.heading) * P7_WANDER_SPEED;
 
-    /* home point drifts in its own slow circle so resting layout breathes */
-    this.homeAngle = Math.random() * Math.PI * 2;
-    this.homeDriftR = 30 + Math.random() * 50;
+    this.homeAngle  = Math.random() * Math.PI * 2;
+    this.homeDriftR = 25 + Math.random() * 45;
   }
+
   update(wScale) {
     this.angle += this.spin;
 
-    /* idle organic wander: heading slowly turns, gently nudges velocity */
+    /* organic wander */
     this.heading += this.headingSpin;
-    if (Math.random() < 0.01) this.headingSpin = (Math.random() - .5) * 0.04;
-    const wanderAx = Math.cos(this.heading) * P7_WANDER_SPEED * wScale;
-    const wanderAy = Math.sin(this.heading) * P7_WANDER_SPEED * wScale;
-    this.vx += (wanderAx - this.vx) * 0.02;
-    this.vy += (wanderAy - this.vy) * 0.02;
+    if (Math.random() < 0.012) this.headingSpin = (Math.random() - 0.5) * 0.03;
+    this.vx += (Math.cos(this.heading) * P7_WANDER_SPEED * wScale - this.vx) * 0.025;
+    this.vy += (Math.sin(this.heading) * P7_WANDER_SPEED * wScale - this.vy) * 0.025;
 
-    /* slowly drifting home point — keeps the resting swarm gently alive */
+    /* drifting home point */
     this.homeAngle += P7_HOME_JITTER_T;
     const curHomeX = this.homeX + Math.cos(this.homeAngle) * this.homeDriftR;
     const curHomeY = this.homeY + Math.sin(this.homeAngle) * this.homeDriftR;
 
-    /* hand interaction — independent per hand. We also track how strongly
-       ANY hand is currently influencing this particle (0 = untouched,
-       1 = fully in a hand's grip) so the homing pull below can back off
-       while a hand is actively playing with it, then snap back to full
-       strength once hands let go. This is what lets gather/scatter feel
-       strong during play while still guaranteeing the swarm redistributes
-       across the whole screen afterward instead of clumping at an edge. */
-    let handInfluence = 0;
+    /* ── BODY PUSH — core feature ── */
+    let bodyInfluence = 0;
+    const push = p7BodyPushVec(this.x, this.y, wScale);
+    if (push) {
+      /* Scale push strength with how much the body is moving */
+      const movementBoost = 1 + p7BodyMoving * 5;
+      const strength = P7_BODY_PUSH * push.t * movementBoost * wScale;
+      this.vx += push.x * strength;
+      this.vy += push.y * strength;
+      bodyInfluence = push.t;
+    }
+
+    /* ── HAND INTERACTION (scatter fast / gather slow) ── */
+    const HAND_SCATTER_R  = 200 * wScale;
+    const HAND_GATHER_R   = 180 * wScale;
+    const HAND_SLOW_SPD   = 8;
+    const HAND_FAST_SPD   = 22;
+    const HAND_SCATTER_STR = 2.2;
+    const HAND_GATHER_STR  = 0.5;
+
     for (let hi = 0; hi < 2; hi++) {
       const h = p7HandState[hi];
       if (!h.active) continue;
       const dx = this.x - h.x, dy = this.y - h.y;
-      const distSq = dx * dx + dy * dy;
-      if (distSq > P7_GATHER_RADIUS_SQ && distSq > P7_SCATTER_RADIUS_SQ) continue; // cheap reject, no sqrt
-      const dist = Math.sqrt(distSq) || 0.0001;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
 
-      if (h.speed <= P7_SLOW_HAND_SPEED && dist < P7_GATHER_RADIUS) {
-        const t = 1 - dist / P7_GATHER_RADIUS;
-        const pull = P7_GATHER_STRENGTH * t * t;
-        this.vx -= (dx / dist) * pull;
-        this.vy -= (dy / dist) * pull;
-        handInfluence = Math.max(handInfluence, t);
-      } else if (h.speed >= P7_FAST_HAND_SPEED && dist < P7_SCATTER_RADIUS) {
-        const t = 1 - dist / P7_SCATTER_RADIUS;
-        const push = P7_SCATTER_STRENGTH * t * t;
+      if (h.speed >= HAND_FAST_SPD && dist < HAND_SCATTER_R) {
+        const t = 1 - dist / HAND_SCATTER_R;
         const hdx = h.vx / (h.speed || 1), hdy = h.vy / (h.speed || 1);
-        this.vx += ((dx / dist) * 0.6 + hdx * 0.4) * push;
-        this.vy += ((dy / dist) * 0.6 + hdy * 0.4) * push;
-        handInfluence = Math.max(handInfluence, t);
-      } else if (dist < P7_GATHER_RADIUS) {
-        const t = 1 - dist / P7_GATHER_RADIUS;
-        this.vx -= (dx / dist) * P7_GATHER_STRENGTH * 0.35 * t;
-        this.vy -= (dy / dist) * P7_GATHER_STRENGTH * 0.35 * t;
-        handInfluence = Math.max(handInfluence, t * 0.5);
+        this.vx += ((dx / dist) * 0.6 + hdx * 0.4) * HAND_SCATTER_STR * t * t;
+        this.vy += ((dy / dist) * 0.6 + hdy * 0.4) * HAND_SCATTER_STR * t * t;
+      } else if (h.speed < HAND_SLOW_SPD && dist < HAND_GATHER_R) {
+        const t = 1 - dist / HAND_GATHER_R;
+        this.vx -= (dx / dist) * HAND_GATHER_STR * t * t;
+        this.vy -= (dy / dist) * HAND_GATHER_STR * t * t;
       }
     }
 
-    /* soft homing pull — this is what prevents permanent edge-clumping.
-       Scaled down while a hand is actively influencing this particle so
-       gather/scatter aren't fought, then ramps back to full strength
-       within a moment of the hand releasing it. */
-    const homeMul = 1 - handInfluence * 0.85;
+    /* soft homing — back off when body/hand is pushing */
+    const homeMul = 1 - Math.min(1, bodyInfluence * 0.9);
     this.vx += (curHomeX - this.x) * P7_HOME_STRENGTH * homeMul;
     this.vy += (curHomeY - this.y) * P7_HOME_STRENGTH * homeMul;
 
-    /* steer around the player's body instead of hugging it */
-    if (p7IsPerson(this.x, this.y)) {
-      let lx = this.x, rx = this.x;
-      while (lx > 0 && p7IsPerson(lx - 1, this.y)) lx--;
-      while (rx < p7W - 1 && p7IsPerson(rx + 1, this.y)) rx++;
-      const side = (this.x - lx) <= (rx - this.x) ? -1 : 1;
-      this.vx += side * P7_PERSON_PUSH * wScale;
-      this.vy += (Math.random() - .5) * P7_PERSON_PUSH * 0.4;
-    }
-
-    /* damping keeps motion smooth and prevents runaway speeds */
-    this.vx *= P7_DAMPING; this.vy *= P7_DAMPING;
-    const spSq = this.vx * this.vx + this.vy * this.vy;
+    /* damping + speed cap */
+    this.vx *= P7_DAMPING;
+    this.vy *= P7_DAMPING;
+    const spSq  = this.vx * this.vx + this.vy * this.vy;
     const maxSp = P7_MAX_SPEED * wScale;
     if (spSq > maxSp * maxSp) {
       const sp = Math.sqrt(spSq);
-      this.vx = (this.vx / sp) * maxSp; this.vy = (this.vy / sp) * maxSp;
+      this.vx = (this.vx / sp) * maxSp;
+      this.vy = (this.vy / sp) * maxSp;
     }
 
-    this.x += this.vx; this.y += this.vy;
+    this.x += this.vx;
+    this.y += this.vy;
 
-    /* Boundary Collision / Wall Bounce — reflect velocity off the edge
-       like a real ball hitting the inside of a box, instead of just
-       clamping position. Uses the Bloomie's own collision radius so it
-       visually bounces right at its edge, not its center point. */
-    const r = this.collisionR * wScale;
-    if (this.x - r < 0) { this.x = r; this.vx = Math.abs(this.vx) * P7_WALL_RESTITUTION; }
-    else if (this.x + r > p7W) { this.x = p7W - r; this.vx = -Math.abs(this.vx) * P7_WALL_RESTITUTION; }
-    if (this.y - r < 0) { this.y = r; this.vy = Math.abs(this.vy) * P7_WALL_RESTITUTION; }
-    else if (this.y + r > p7H) { this.y = p7H - r; this.vy = -Math.abs(this.vy) * P7_WALL_RESTITUTION; }
+    /* wall bounce */
+    const r = this.baseSize * 18 * wScale;
+    if (this.x - r < 0)      { this.x = r;          this.vx =  Math.abs(this.vx) * 0.8; }
+    if (this.x + r > p7W)    { this.x = p7W - r;    this.vx = -Math.abs(this.vx) * 0.8; }
+    if (this.y - r < 0)      { this.y = r;           this.vy =  Math.abs(this.vy) * 0.8; }
+    if (this.y + r > p7H)    { this.y = p7H - r;     this.vy = -Math.abs(this.vy) * 0.8; }
   }
+
   draw(c, wScale) {
     c.save();
     c.translate(this.x, this.y);
     c.rotate(this.angle);
-    const s = this.baseSize * wScale;
-    c.scale(s, s);
+    c.scale(this.baseSize * wScale, this.baseSize * wScale);
     drawShape(c, this.myShape, this.color);
     c.restore();
   }
 }
 
-/* Evenly-jittered grid seeding: divide the screen into a grid with
-   roughly one cell per Bloomie, then place each Bloomie at a random
-   point inside its own cell. This guarantees full, even screen
-   coverage from frame one — pure Math.random() positions can (and did)
-   leave large empty gaps purely by chance. */
+/* Evenly-jittered grid seed */
 function p7SeedSwarm() {
   p7Particles = [];
   const aspect = p7W / p7H || 16 / 9;
-  let cols = Math.round(Math.sqrt(P7_COUNT * aspect));
-  let rows = Math.ceil(P7_COUNT / cols);
-  const cellW = p7W / cols, cellH = p7H / rows;
+  const cols   = Math.round(Math.sqrt(P7_COUNT * aspect));
+  const rows   = Math.ceil(P7_COUNT / cols);
+  const cellW  = p7W / cols, cellH = p7H / rows;
   let made = 0;
   for (let r = 0; r < rows && made < P7_COUNT; r++) {
     for (let c = 0; c < cols && made < P7_COUNT; c++) {
@@ -282,93 +240,17 @@ function p7SeedSwarm() {
   }
 }
 
-/* ─── Physical collisions: Circle-Circle Detection + Resolution ───
-   "Real balls in a box" — Bloomie should never visually overlap. With
-   500+ particles, naive all-pairs checking is O(n²) (~270k pair tests
-   per frame), too slow for low-end phones. Instead we use a uniform
-   SPATIAL GRID as a broad-phase: each frame, every Bloomie is dropped
-   into the grid cell it currently occupies, then we only test a
-   particle against others sharing its cell or an immediate neighbour
-   cell. Since cell size is chosen to comfortably fit the largest
-   Bloomie's diameter, two particles can only actually be overlapping
-   if they're in the same or an adjacent cell — so this loses no real
-   collisions while skipping the vast majority of far-apart pairs. */
-let p7Grid = new Map();
-let p7GridCellSize = 60; // recomputed in resolveCollisions based on largest particle
-
-function p7GridKey(cx, cy) { return cx + ',' + cy; }
-
-function p7ResolveCollisions(wScale) {
-  const n = p7Particles.length;
-  if (n < 2) return;
-
-  /* size the grid cell to ~2x the largest collision radius so a particle
-     only ever needs to check its own cell + the 8 neighbours */
-  const maxR = 1.25 * P7_COLLISION_RADIUS_MUL * wScale; // matches P7_SIZES large band max
-  p7GridCellSize = Math.max(24, maxR * 2.2);
-
-  for (let iter = 0; iter < P7_COLLISION_ITERATIONS; iter++) {
-    /* rebuild grid each iteration since positions shift during resolution */
-    p7Grid.clear();
-    for (let i = 0; i < n; i++) {
-      const p = p7Particles[i];
-      const cx = Math.floor(p.x / p7GridCellSize), cy = Math.floor(p.y / p7GridCellSize);
-      const key = p7GridKey(cx, cy);
-      let bucket = p7Grid.get(key);
-      if (!bucket) { bucket = []; p7Grid.set(key, bucket); }
-      bucket.push(i);
-    }
-
-    for (let i = 0; i < n; i++) {
-      const a = p7Particles[i];
-      const acx = Math.floor(a.x / p7GridCellSize), acy = Math.floor(a.y / p7GridCellSize);
-      const ar = a.collisionR * wScale;
-
-      for (let ny = acy - 1; ny <= acy + 1; ny++) {
-        for (let nx = acx - 1; nx <= acx + 1; nx++) {
-          const bucket = p7Grid.get(p7GridKey(nx, ny));
-          if (!bucket) continue;
-          for (let bi = 0; bi < bucket.length; bi++) {
-            const j = bucket[bi];
-            if (j <= i) continue; // each unordered pair exactly once
-            const b = p7Particles[j];
-            const br = b.collisionR * wScale;
-            const minDist = ar + br;
-
-            const dx = b.x - a.x, dy = b.y - a.y;
-            const distSq = dx * dx + dy * dy;
-            if (distSq >= minDist * minDist || distSq < 1e-8) continue;
-
-            const dist = Math.sqrt(distSq);
-            const nxAxis = dx / dist, nyAxis = dy / dist;
-            const overlap = minDist - dist;
-
-            /* mass proportional to area (r^2) — bigger Bloomie push smaller ones more */
-            const massA = ar * ar, massB = br * br;
-            const totalMass = massA + massB;
-            const pushA = overlap * (massB / totalMass);
-            const pushB = overlap * (massA / totalMass);
-
-            /* positional correction: separate so they no longer overlap */
-            a.x -= nxAxis * pushA; a.y -= nyAxis * pushA;
-            b.x += nxAxis * pushB; b.y += nyAxis * pushB;
-
-            /* velocity resolution: reflect the relative velocity along the
-               collision normal (1D elastic collision along the normal),
-               scaled by restitution — strong, bouncy "real ball" response */
-            const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
-            const relVelAlongNormal = rvx * nxAxis + rvy * nyAxis;
-            if (relVelAlongNormal < 0) { // only resolve if still approaching
-              const impulse = -(1 + P7_RESTITUTION) * relVelAlongNormal / (1 / massA + 1 / massB);
-              const ix = impulse * nxAxis, iy = impulse * nyAxis;
-              a.vx -= ix / massA; a.vy -= iy / massA;
-              b.vx += ix / massB; b.vy += iy / massB;
-            }
-          }
-        }
-      }
-    }
+/* ─── Detect body movement via mask diff ─── */
+function p7DetectMovement() {
+  if (!p7PrevMask || !p7CurrMask) return 0;
+  let diff = 0;
+  const len = P7_MW * P7_MH;
+  for (let i = 0; i < len; i++) {
+    const a = p7PrevMask[i * 4] > 80 ? 1 : 0;
+    const b = p7CurrMask[i * 4] > 80 ? 1 : 0;
+    if (a !== b) diff++;
   }
+  return diff / len; // 0–1 fraction of pixels that changed
 }
 
 let p7SelfieSegmentation;
@@ -376,12 +258,9 @@ let p7SelfieSegmentation;
 function resizeP7() {
   const prevW = p7W, prevH = p7H;
   p7W = window.innerWidth; p7H = window.innerHeight;
-  p7Canvas.width = p7W; p7Canvas.height = p7H;
+  p7Canvas.width       = p7W; p7Canvas.height       = p7H;
   p7PersonCanvas.width = p7W; p7PersonCanvas.height = p7H;
-  p7PersonBuf.width = p7W; p7PersonBuf.height = p7H;
-  /* rescale existing Bloomie positions + home points proportionally
-     instead of re-seeding, so the same living swarm persists through
-     resize without ever "disappearing" */
+  p7PersonBuf.width    = p7W; p7PersonBuf.height    = p7H;
   if (prevW && prevH && p7Particles.length) {
     const sx = p7W / prevW, sy = p7H / prevH;
     p7Particles.forEach(p => {
@@ -394,15 +273,22 @@ function resizeP7() {
 function initPage7() {
   p7Started = true;
   resizeP7();
-  window.addEventListener('resize', () => { resizeP7(); });
+  window.addEventListener('resize', resizeP7);
   p7SeedSwarm();
 
-  p7SelfieSegmentation = new SelfieSegmentation({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}` });
+  p7SelfieSegmentation = new SelfieSegmentation({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}`
+  });
   p7SelfieSegmentation.setOptions({ modelSelection: 1 });
   p7SelfieSegmentation.onResults(onP7SelfieResults);
 
-  p7Hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-  p7Hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+  p7Hands = new Hands({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+  });
+  p7Hands.setOptions({
+    maxNumHands: 2, modelComplexity: 1,
+    minDetectionConfidence: 0.6, minTrackingConfidence: 0.5
+  });
   p7Hands.onResults(onP7HandResults);
 
   p7Camera = new Camera(p7Video, {
@@ -416,37 +302,45 @@ function initPage7() {
 }
 
 function onP7SelfieResults(results) {
-  /* Sample mask in RAW (unmirrored) orientation — p7IsPerson flips x to match */
+  /* ── 1. Sample mask & detect movement ── */
   p7SampX.clearRect(0, 0, P7_MW, P7_MH);
   p7SampX.drawImage(results.segmentationMask, 0, 0, P7_MW, P7_MH);
-  p7MaskData = p7SampX.getImageData(0, 0, P7_MW, P7_MH).data;
+  const newMask = p7SampX.getImageData(0, 0, P7_MW, P7_MH).data;
 
-  /* Person cutout buffer: mask clipped to camera, both drawn MIRRORED for display */
+  p7PrevMask = p7CurrMask;
+  p7CurrMask = newMask;
+
+  /* movement intensity: 0 = still, 1 = lots of motion */
+  const rawMovement = p7DetectMovement();
+  /* smooth it — ramp up fast, decay slowly so pushes feel snappy */
+  p7BodyMoving = Math.max(p7BodyMoving * 0.75, Math.min(1, rawMovement * 18));
+
+  /* ── 2. Person cutout (mirrored) ── */
   p7PersonBufCtx.clearRect(0, 0, p7W, p7H);
-  p7PersonBufCtx.save(); p7PersonBufCtx.translate(p7W, 0); p7PersonBufCtx.scale(-1, 1);
+  p7PersonBufCtx.save();
+  p7PersonBufCtx.translate(p7W, 0); p7PersonBufCtx.scale(-1, 1);
   p7PersonBufCtx.drawImage(results.segmentationMask, 0, 0, p7W, p7H);
   p7PersonBufCtx.restore();
   p7PersonBufCtx.globalCompositeOperation = 'source-in';
-  p7PersonBufCtx.save(); p7PersonBufCtx.translate(p7W, 0); p7PersonBufCtx.scale(-1, 1);
+  p7PersonBufCtx.save();
+  p7PersonBufCtx.translate(p7W, 0); p7PersonBufCtx.scale(-1, 1);
   p7PersonBufCtx.drawImage(results.image, 0, 0, p7W, p7H);
   p7PersonBufCtx.restore();
   p7PersonBufCtx.globalCompositeOperation = 'source-over';
 
-  /* Main canvas: mirrored camera -> living swarm (always-on, never reseeded) */
+  /* ── 3. Draw camera feed ── */
   p7Ctx.clearRect(0, 0, p7W, p7H);
-  p7Ctx.save(); p7Ctx.translate(p7W, 0); p7Ctx.scale(-1, 1);
+  p7Ctx.save();
+  p7Ctx.translate(p7W, 0); p7Ctx.scale(-1, 1);
   p7Ctx.drawImage(results.image, 0, 0, p7W, p7H);
   p7Ctx.restore();
-  const wScale = p7W / 800 || 1;
-  for (let i = 0; i < p7Particles.length; i++) {
-    p7Particles[i].update(wScale);
-  }
-  p7ResolveCollisions(wScale);
-  for (let i = 0; i < p7Particles.length; i++) {
-    p7Particles[i].draw(p7Ctx, wScale);
-  }
 
-  /* Person drawn on top so the player is always fully visible */
+  /* ── 4. Update + draw bloomie ── */
+  const wScale = p7W / 800 || 1;
+  for (let i = 0; i < p7Particles.length; i++) p7Particles[i].update(wScale);
+  for (let i = 0; i < p7Particles.length; i++) p7Particles[i].draw(p7Ctx, wScale);
+
+  /* ── 5. Person on top ── */
   p7PersonCtx.clearRect(0, 0, p7W, p7H);
   p7PersonCtx.drawImage(p7PersonBuf, 0, 0);
 }
