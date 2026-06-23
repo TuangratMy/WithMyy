@@ -15,6 +15,15 @@
                        attracted toward the hand (gather)
                      - fast hand movement  -> nearby Bloomie are pushed
                        away along the hand's travel direction (scatter)
+   Physical collisions: Bloomie behave like solid balls in a box —
+                     Circle-Circle Collision Detection + Resolution
+                     (overlapping Bloomie are separated and bounce off
+                     each other with a strong elastic response) plus
+                     Boundary Collision / Wall Bounce (hitting a screen
+                     edge reflects velocity instead of just clamping
+                     position). A uniform spatial grid keeps this fast
+                     with 500+ particles by only testing pairs that are
+                     actually near each other instead of every pair.
    Person visibility: SelfieSegmentation still draws the camera + person
                      cutout on top (so the player is always visible), but
                      instead of "hugging" the body like Page 3/4, Bloomie
@@ -50,6 +59,12 @@ const P7_FAST_HAND_SPEED  = 26;    // px/frame above this = "fast" (scatter)
 const P7_PERSON_PUSH      = 3.2;   // how hard Bloomie are steered off the body
 const P7_HOME_STRENGTH    = 0.022; // gentle pull back to home point — keeps swarm spread out
 const P7_HOME_JITTER_T    = 0.0035;// how fast each Bloomie's home point itself wanders
+
+/* Physical collision tuning — "real ball in a box" feel */
+const P7_COLLISION_RADIUS_MUL = 16;   // visual shape radius ~= baseSize * this (matches drawShape's ~18-20px star/flower extents)
+const P7_RESTITUTION           = 0.92; // bounce energy retained on collision (1 = perfectly elastic). Strong & bouncy per request.
+const P7_WALL_RESTITUTION      = 0.85; // slightly softer wall bounce so the swarm doesn't feel like a pinball machine
+const P7_COLLISION_ITERATIONS  = 2;    // resolve passes per frame — keeps dense clusters from visibly overlapping
 
 /* Mask sampling buffer — low-res for perf, same approach as p3/p4 */
 const P7_MW = 80, P7_MH = 60;
@@ -127,6 +142,9 @@ class P7Bloomie {
        reliably get a mix of small/medium/large rather than a uniform blur */
     const band = P7_SIZES[Math.floor(Math.random() * P7_SIZES.length)];
     this.baseSize = band.min + Math.random() * (band.max - band.min);
+    /* collision radius in screen px — recomputed on resize via wScale in update/draw,
+       but we keep a baseline here and scale it live where it's used */
+    this.collisionR = this.baseSize * P7_COLLISION_RADIUS_MUL;
 
     this.angle = Math.random() * Math.PI * 2;
     this.spin = (Math.random() - .5) * .05;
@@ -221,12 +239,15 @@ class P7Bloomie {
 
     this.x += this.vx; this.y += this.vy;
 
-    /* hard clamp to screen (homing force keeps this from triggering often) */
-    const m = 20;
-    if (this.x < -m) { this.x = -m; this.vx = Math.abs(this.vx) * 0.5; }
-    if (this.x > p7W + m) { this.x = p7W + m; this.vx = -Math.abs(this.vx) * 0.5; }
-    if (this.y < -m) { this.y = -m; this.vy = Math.abs(this.vy) * 0.5; }
-    if (this.y > p7H + m) { this.y = p7H + m; this.vy = -Math.abs(this.vy) * 0.5; }
+    /* Boundary Collision / Wall Bounce — reflect velocity off the edge
+       like a real ball hitting the inside of a box, instead of just
+       clamping position. Uses the Bloomie's own collision radius so it
+       visually bounces right at its edge, not its center point. */
+    const r = this.collisionR * wScale;
+    if (this.x - r < 0) { this.x = r; this.vx = Math.abs(this.vx) * P7_WALL_RESTITUTION; }
+    else if (this.x + r > p7W) { this.x = p7W - r; this.vx = -Math.abs(this.vx) * P7_WALL_RESTITUTION; }
+    if (this.y - r < 0) { this.y = r; this.vy = Math.abs(this.vy) * P7_WALL_RESTITUTION; }
+    else if (this.y + r > p7H) { this.y = p7H - r; this.vy = -Math.abs(this.vy) * P7_WALL_RESTITUTION; }
   }
   draw(c, wScale) {
     c.save();
@@ -257,6 +278,95 @@ function p7SeedSwarm() {
       const hy = r * cellH + Math.random() * cellH;
       p7Particles.push(new P7Bloomie(hx, hy));
       made++;
+    }
+  }
+}
+
+/* ─── Physical collisions: Circle-Circle Detection + Resolution ───
+   "Real balls in a box" — Bloomie should never visually overlap. With
+   500+ particles, naive all-pairs checking is O(n²) (~270k pair tests
+   per frame), too slow for low-end phones. Instead we use a uniform
+   SPATIAL GRID as a broad-phase: each frame, every Bloomie is dropped
+   into the grid cell it currently occupies, then we only test a
+   particle against others sharing its cell or an immediate neighbour
+   cell. Since cell size is chosen to comfortably fit the largest
+   Bloomie's diameter, two particles can only actually be overlapping
+   if they're in the same or an adjacent cell — so this loses no real
+   collisions while skipping the vast majority of far-apart pairs. */
+let p7Grid = new Map();
+let p7GridCellSize = 60; // recomputed in resolveCollisions based on largest particle
+
+function p7GridKey(cx, cy) { return cx + ',' + cy; }
+
+function p7ResolveCollisions(wScale) {
+  const n = p7Particles.length;
+  if (n < 2) return;
+
+  /* size the grid cell to ~2x the largest collision radius so a particle
+     only ever needs to check its own cell + the 8 neighbours */
+  const maxR = 1.25 * P7_COLLISION_RADIUS_MUL * wScale; // matches P7_SIZES large band max
+  p7GridCellSize = Math.max(24, maxR * 2.2);
+
+  for (let iter = 0; iter < P7_COLLISION_ITERATIONS; iter++) {
+    /* rebuild grid each iteration since positions shift during resolution */
+    p7Grid.clear();
+    for (let i = 0; i < n; i++) {
+      const p = p7Particles[i];
+      const cx = Math.floor(p.x / p7GridCellSize), cy = Math.floor(p.y / p7GridCellSize);
+      const key = p7GridKey(cx, cy);
+      let bucket = p7Grid.get(key);
+      if (!bucket) { bucket = []; p7Grid.set(key, bucket); }
+      bucket.push(i);
+    }
+
+    for (let i = 0; i < n; i++) {
+      const a = p7Particles[i];
+      const acx = Math.floor(a.x / p7GridCellSize), acy = Math.floor(a.y / p7GridCellSize);
+      const ar = a.collisionR * wScale;
+
+      for (let ny = acy - 1; ny <= acy + 1; ny++) {
+        for (let nx = acx - 1; nx <= acx + 1; nx++) {
+          const bucket = p7Grid.get(p7GridKey(nx, ny));
+          if (!bucket) continue;
+          for (let bi = 0; bi < bucket.length; bi++) {
+            const j = bucket[bi];
+            if (j <= i) continue; // each unordered pair exactly once
+            const b = p7Particles[j];
+            const br = b.collisionR * wScale;
+            const minDist = ar + br;
+
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq >= minDist * minDist || distSq < 1e-8) continue;
+
+            const dist = Math.sqrt(distSq);
+            const nxAxis = dx / dist, nyAxis = dy / dist;
+            const overlap = minDist - dist;
+
+            /* mass proportional to area (r^2) — bigger Bloomie push smaller ones more */
+            const massA = ar * ar, massB = br * br;
+            const totalMass = massA + massB;
+            const pushA = overlap * (massB / totalMass);
+            const pushB = overlap * (massA / totalMass);
+
+            /* positional correction: separate so they no longer overlap */
+            a.x -= nxAxis * pushA; a.y -= nyAxis * pushA;
+            b.x += nxAxis * pushB; b.y += nyAxis * pushB;
+
+            /* velocity resolution: reflect the relative velocity along the
+               collision normal (1D elastic collision along the normal),
+               scaled by restitution — strong, bouncy "real ball" response */
+            const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+            const relVelAlongNormal = rvx * nxAxis + rvy * nyAxis;
+            if (relVelAlongNormal < 0) { // only resolve if still approaching
+              const impulse = -(1 + P7_RESTITUTION) * relVelAlongNormal / (1 / massA + 1 / massB);
+              const ix = impulse * nxAxis, iy = impulse * nyAxis;
+              a.vx -= ix / massA; a.vy -= iy / massA;
+              b.vx += ix / massB; b.vy += iy / massB;
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -330,6 +440,9 @@ function onP7SelfieResults(results) {
   const wScale = p7W / 800 || 1;
   for (let i = 0; i < p7Particles.length; i++) {
     p7Particles[i].update(wScale);
+  }
+  p7ResolveCollisions(wScale);
+  for (let i = 0; i < p7Particles.length; i++) {
     p7Particles[i].draw(p7Ctx, wScale);
   }
 
