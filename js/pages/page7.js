@@ -1,77 +1,42 @@
-/* ══════════════════ PAGE 7 ENGINE — FULL OF BLOOMIE ══════════════════
-   Bloomie float and fill the whole screen.
-   When the person moves, Bloomie near the body bounce away.
-   Bloomie slowly drift back to fill the screen again when still.
+/* ══════════════════ PAGE 7 — FULL OF BLOOMIE ══════════════════
+   Bloomie pile at the bottom. Scoop them up with your hands —
+   they float toward your palm. Let go and gravity pulls them back down.
+   They bounce off each other like real balls.
 ══════════════════════════════════════════════════ */
-const p7Video        = document.getElementById('p7-video');
-const p7Canvas        = document.getElementById('p7-canvas');
-const p7Ctx           = p7Canvas.getContext('2d');
-const p7PersonCanvas  = document.getElementById('p7-person-canvas');
-const p7PersonCtx     = p7PersonCanvas.getContext('2d');
-const p7Loading       = document.getElementById('p7-loading');
+const p7Video       = document.getElementById('p7-video');
+const p7Canvas      = document.getElementById('p7-canvas');
+const p7Ctx         = p7Canvas.getContext('2d');
+const p7PersonCanvas= document.getElementById('p7-person-canvas');
+const p7PersonCtx   = p7PersonCanvas.getContext('2d');
+const p7Loading     = document.getElementById('p7-loading');
 
 let p7Started = false, p7W = 0, p7H = 0;
 
-/* ─── Swarm tuning ─── */
-const P7_COUNT         = 180;
-const P7_WANDER_SPEED  = 0.4;
-const P7_MAX_SPEED     = 10;
-const P7_DAMPING       = 0.90;
-const P7_HOME_STRENGTH = 0.018;
-const P7_HOME_JITTER_T = 0.003;
-const P7_BODY_PUSH     = 7.0;    // how hard bloomie bounce off body
-const P7_BODY_RADIUS   = 55;     // px — how far from body edge to start pushing
+/* ─── Tuning ─── */
+const P7_COUNT        = 120;
+const P7_GRAVITY      = 0.18;   // pulls bloomie downward every frame
+const P7_DAMPING      = 0.88;   // velocity decay
+const P7_RESTITUTION  = 0.55;   // bounciness on collision (0=dead, 1=elastic)
+const P7_FLOOR_BOUNCE = 0.35;   // bounciness off floor
+const P7_GATHER_R     = 200;    // px — hand attract radius
+const P7_GATHER_STR   = 0.32;   // how hard hand pulls bloomie toward it
+const P7_SCATTER_R    = 180;    // px — fast-hand scatter radius
+const P7_SCATTER_STR  = 2.8;    // how hard fast hand pushes bloomie away
+const P7_SLOW_SPD     = 8;      // px/frame — below this = "slow" (gather)
+const P7_FAST_SPD     = 24;     // px/frame — above this = "fast" (scatter)
+const P7_MAX_SPEED    = 16;
 
-/* ─── Mask sampling — low-res for perf ─── */
+/* ─── Mask (person cutout) ─── */
 const P7_MW = 60, P7_MH = 45;
 const p7SampC = document.createElement('canvas');
 p7SampC.width = P7_MW; p7SampC.height = P7_MH;
 const p7SampX = p7SampC.getContext('2d');
-
-/* Previous frame mask — used to detect body movement */
-let p7PrevMask   = null;
-let p7CurrMask   = null;
-let p7BodyMoving = 0; // 0–1 intensity, decays each frame
-
-/* person cutout buffer */
+let p7MaskData = null;
 const p7PersonBuf    = document.createElement('canvas');
 const p7PersonBufCtx = p7PersonBuf.getContext('2d');
 
-function p7IsPerson(cx, cy) {
-  if (!p7CurrMask || cx < 0 || cy < 0 || cx >= p7W || cy >= p7H) return false;
-  const mx = p7W - 1 - cx; // canvas is mirrored, flip back
-  const mi = (Math.floor((cy / p7H) * P7_MH) * P7_MW + Math.floor((mx / p7W) * P7_MW)) * 4;
-  return p7CurrMask[mi] > 80;
-}
-
-/* Sample points around a bloomie and return the average push direction away from body */
-function p7BodyPushVec(bx, by, wScale) {
-  const r = P7_BODY_RADIUS * wScale;
-  const steps = 8;
-  let pushX = 0, pushY = 0, hits = 0;
-  for (let i = 0; i < steps; i++) {
-    const angle = (i / steps) * Math.PI * 2;
-    const sx = bx + Math.cos(angle) * r * 0.5;
-    const sy = by + Math.sin(angle) * r * 0.5;
-    if (p7IsPerson(sx, sy)) {
-      pushX += Math.cos(angle + Math.PI);
-      pushY += Math.sin(angle + Math.PI);
-      hits++;
-    }
-  }
-  if (hits === 0 && !p7IsPerson(bx, by)) return null;
-  // If center is inside body, push in a random outward direction
-  if (hits === 0) {
-    const angle = Math.random() * Math.PI * 2;
-    return { x: Math.cos(angle), y: Math.sin(angle), t: 1 };
-  }
-  const mag = Math.sqrt(pushX * pushX + pushY * pushY) || 1;
-  const t = Math.min(1, hits / (steps * 0.5));
-  return { x: pushX / mag, y: pushY / mag, t };
-}
-
-/* ─── Hand tracking (optional extra interaction) ─── */
-let p7Hands, p7Camera;
+/* ─── Hand state ─── */
+let p7Hands, p7Camera, p7SelfieSegmentation;
 let p7HandState = [
   { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false },
   { x: 0, y: 0, vx: 0, vy: 0, speed: 0, active: false }
@@ -81,14 +46,17 @@ function onP7HandResults(results) {
   const seen = [false, false];
   if (results.multiHandLandmarks) {
     for (let i = 0; i < Math.min(2, results.multiHandLandmarks.length); i++) {
-      const lm = results.multiHandLandmarks[i][9];
-      const nx = (1 - lm.x) * p7W;
-      const ny = lm.y * p7H;
+      /* Use wrist (0) + middle-MCP (9) midpoint as "palm center" */
+      const lm0 = results.multiHandLandmarks[i][0];
+      const lm9 = results.multiHandLandmarks[i][9];
+      const rawX = (lm0.x + lm9.x) / 2;
+      const rawY = (lm0.y + lm9.y) / 2;
+      const nx = (1 - rawX) * p7W;
+      const ny = rawY * p7H;
       const h = p7HandState[i];
       if (h.active) {
-        const dx = nx - h.x, dy = ny - h.y;
-        h.vx = dx; h.vy = dy;
-        h.speed = Math.sqrt(dx * dx + dy * dy);
+        h.vx = nx - h.x; h.vy = ny - h.y;
+        h.speed = Math.sqrt(h.vx * h.vx + h.vy * h.vy);
       } else {
         h.vx = 0; h.vy = 0; h.speed = 0;
       }
@@ -101,115 +69,71 @@ function onP7HandResults(results) {
   }
 }
 
-/* ─── Bloomie particle ─── */
+/* ─── Particle ─── */
 let p7Particles = [];
 
-const P7_SIZES = [
-  { min: 0.5, max: 0.8  },
-  { min: 0.9, max: 1.3  },
-  { min: 1.4, max: 2.0  }
-];
+const P7_SIZES = [0.35, 0.5, 0.65]; // base scale options (small!)
 
 class P7Bloomie {
-  constructor(homeX, homeY) {
-    this.color    = palette[Math.floor(Math.random() * palette.length)];
-    this.myShape  = allShapes[Math.floor(Math.random() * allShapes.length)];
-    this.x        = homeX;
-    this.y        = homeY;
-    this.homeX    = homeX;
-    this.homeY    = homeY;
-
-    const band    = P7_SIZES[Math.floor(Math.random() * P7_SIZES.length)];
-    this.baseSize = band.min + Math.random() * (band.max - band.min);
-
-    this.angle       = Math.random() * Math.PI * 2;
-    this.spin        = (Math.random() - 0.5) * 0.04;
-    this.heading     = Math.random() * Math.PI * 2;
-    this.headingSpin = (Math.random() - 0.5) * 0.03;
-    this.vx          = Math.cos(this.heading) * P7_WANDER_SPEED;
-    this.vy          = Math.sin(this.heading) * P7_WANDER_SPEED;
-
-    this.homeAngle  = Math.random() * Math.PI * 2;
-    this.homeDriftR = 25 + Math.random() * 45;
+  constructor(x, y) {
+    this.color   = palette[Math.floor(Math.random() * palette.length)];
+    this.myShape = allShapes[Math.floor(Math.random() * allShapes.length)];
+    this.x = x; this.y = y;
+    this.vx = (Math.random() - 0.5) * 1.5;
+    this.vy = Math.random() * -1;
+    this.baseSize = P7_SIZES[Math.floor(Math.random() * P7_SIZES.length)];
+    this.r = this.baseSize * 20; // collision radius (px at 800w baseline, scaled live)
+    this.angle = Math.random() * Math.PI * 2;
+    this.spin   = (Math.random() - 0.5) * 0.06;
   }
 
   update(wScale) {
     this.angle += this.spin;
+    const r = this.r * wScale;
 
-    /* organic wander */
-    this.heading += this.headingSpin;
-    if (Math.random() < 0.012) this.headingSpin = (Math.random() - 0.5) * 0.03;
-    this.vx += (Math.cos(this.heading) * P7_WANDER_SPEED * wScale - this.vx) * 0.025;
-    this.vy += (Math.sin(this.heading) * P7_WANDER_SPEED * wScale - this.vy) * 0.025;
+    /* gravity */
+    this.vy += P7_GRAVITY * wScale;
 
-    /* drifting home point */
-    this.homeAngle += P7_HOME_JITTER_T;
-    const curHomeX = this.homeX + Math.cos(this.homeAngle) * this.homeDriftR;
-    const curHomeY = this.homeY + Math.sin(this.homeAngle) * this.homeDriftR;
-
-    /* ── BODY PUSH — core feature ── */
-    let bodyInfluence = 0;
-    const push = p7BodyPushVec(this.x, this.y, wScale);
-    if (push) {
-      /* Scale push strength with how much the body is moving */
-      const movementBoost = 1 + p7BodyMoving * 5;
-      const strength = P7_BODY_PUSH * push.t * movementBoost * wScale;
-      this.vx += push.x * strength;
-      this.vy += push.y * strength;
-      bodyInfluence = push.t;
-    }
-
-    /* ── HAND INTERACTION (scatter fast / gather slow) ── */
-    const HAND_SCATTER_R  = 200 * wScale;
-    const HAND_GATHER_R   = 180 * wScale;
-    const HAND_SLOW_SPD   = 8;
-    const HAND_FAST_SPD   = 22;
-    const HAND_SCATTER_STR = 2.2;
-    const HAND_GATHER_STR  = 0.5;
-
+    /* hand interaction */
     for (let hi = 0; hi < 2; hi++) {
       const h = p7HandState[hi];
       if (!h.active) continue;
       const dx = this.x - h.x, dy = this.y - h.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
 
-      if (h.speed >= HAND_FAST_SPD && dist < HAND_SCATTER_R) {
-        const t = 1 - dist / HAND_SCATTER_R;
-        const hdx = h.vx / (h.speed || 1), hdy = h.vy / (h.speed || 1);
-        this.vx += ((dx / dist) * 0.6 + hdx * 0.4) * HAND_SCATTER_STR * t * t;
-        this.vy += ((dy / dist) * 0.6 + hdy * 0.4) * HAND_SCATTER_STR * t * t;
-      } else if (h.speed < HAND_SLOW_SPD && dist < HAND_GATHER_R) {
-        const t = 1 - dist / HAND_GATHER_R;
-        this.vx -= (dx / dist) * HAND_GATHER_STR * t * t;
-        this.vy -= (dy / dist) * HAND_GATHER_STR * t * t;
+      if (h.speed >= P7_FAST_SPD && dist < P7_SCATTER_R * wScale) {
+        /* fast hand → scatter */
+        const t = 1 - dist / (P7_SCATTER_R * wScale);
+        const hdx = h.vx / h.speed, hdy = h.vy / h.speed;
+        this.vx += ((dx / dist) * 0.55 + hdx * 0.45) * P7_SCATTER_STR * t * t * wScale;
+        this.vy += ((dy / dist) * 0.55 + hdy * 0.45) * P7_SCATTER_STR * t * t * wScale;
+      } else if (h.speed < P7_SLOW_SPD && dist < P7_GATHER_R * wScale) {
+        /* slow hand → gather toward palm */
+        const t = 1 - dist / (P7_GATHER_R * wScale);
+        this.vx -= (dx / dist) * P7_GATHER_STR * t * wScale;
+        this.vy -= (dy / dist) * P7_GATHER_STR * t * wScale;
       }
     }
-
-    /* soft homing — back off when body/hand is pushing */
-    const homeMul = 1 - Math.min(1, bodyInfluence * 0.9);
-    this.vx += (curHomeX - this.x) * P7_HOME_STRENGTH * homeMul;
-    this.vy += (curHomeY - this.y) * P7_HOME_STRENGTH * homeMul;
 
     /* damping + speed cap */
     this.vx *= P7_DAMPING;
     this.vy *= P7_DAMPING;
-    const spSq  = this.vx * this.vx + this.vy * this.vy;
-    const maxSp = P7_MAX_SPEED * wScale;
-    if (spSq > maxSp * maxSp) {
-      const sp = Math.sqrt(spSq);
-      this.vx = (this.vx / sp) * maxSp;
-      this.vy = (this.vy / sp) * maxSp;
+    const spd = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+    const maxSpd = P7_MAX_SPEED * wScale;
+    if (spd > maxSpd) { this.vx = (this.vx / spd) * maxSpd; this.vy = (this.vy / spd) * maxSpd; }
+
+    this.x += this.vx; this.y += this.vy;
+
+    /* walls */
+    if (this.x - r < 0)   { this.x = r;        this.vx =  Math.abs(this.vx) * 0.6; }
+    if (this.x + r > p7W) { this.x = p7W - r;  this.vx = -Math.abs(this.vx) * 0.6; }
+    if (this.y - r < 0)   { this.y = r;         this.vy =  Math.abs(this.vy) * 0.4; }
+    /* floor bounce */
+    if (this.y + r > p7H) {
+      this.y = p7H - r;
+      this.vy = -Math.abs(this.vy) * P7_FLOOR_BOUNCE;
+      this.vx *= 0.85; // friction on floor
     }
-
-    this.x += this.vx;
-    this.y += this.vy;
-
-    /* wall bounce */
-    const r = this.baseSize * 18 * wScale;
-    if (this.x - r < 0)      { this.x = r;          this.vx =  Math.abs(this.vx) * 0.8; }
-    if (this.x + r > p7W)    { this.x = p7W - r;    this.vx = -Math.abs(this.vx) * 0.8; }
-    if (this.y - r < 0)      { this.y = r;           this.vy =  Math.abs(this.vy) * 0.8; }
-    if (this.y + r > p7H)    { this.y = p7H - r;     this.vy = -Math.abs(this.vy) * 0.8; }
   }
 
   draw(c, wScale) {
@@ -222,39 +146,88 @@ class P7Bloomie {
   }
 }
 
-/* Evenly-jittered grid seed */
+/* ─── Ball-ball collision resolution (spatial grid) ─── */
+const p7Grid = new Map();
+
+function p7ResolveCollisions(wScale) {
+  const n = p7Particles.length;
+  if (n < 2) return;
+
+  const maxR = 0.65 * 20 * wScale; // largest baseSize * collision px
+  const cellSize = maxR * 2.2;
+
+  p7Grid.clear();
+  for (let i = 0; i < n; i++) {
+    const p = p7Particles[i];
+    const cx = Math.floor(p.x / cellSize);
+    const cy = Math.floor(p.y / cellSize);
+    const key = cx + ',' + cy;
+    let b = p7Grid.get(key);
+    if (!b) { b = []; p7Grid.set(key, b); }
+    b.push(i);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const a  = p7Particles[i];
+    const ar = a.r * wScale;
+    const acx = Math.floor(a.x / cellSize);
+    const acy = Math.floor(a.y / cellSize);
+
+    for (let cy = acy - 1; cy <= acy + 1; cy++) {
+      for (let cx = acx - 1; cx <= acx + 1; cx++) {
+        const bucket = p7Grid.get(cx + ',' + cy);
+        if (!bucket) continue;
+        for (let bi = 0; bi < bucket.length; bi++) {
+          const j = bucket[bi];
+          if (j <= i) continue;
+          const b  = p7Particles[j];
+          const br = b.r * wScale;
+          const minD = ar + br;
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const distSq = dx * dx + dy * dy;
+          if (distSq >= minD * minD || distSq < 1e-8) continue;
+          const dist = Math.sqrt(distSq);
+          const nx = dx / dist, ny = dy / dist;
+          const overlap = minD - dist;
+          const mA = ar * ar, mB = br * br, mT = mA + mB;
+          a.x -= nx * overlap * (mB / mT);
+          a.y -= ny * overlap * (mB / mT);
+          b.x += nx * overlap * (mA / mT);
+          b.y += ny * overlap * (mA / mT);
+          const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+          const relV = rvx * nx + rvy * ny;
+          if (relV < 0) {
+            const imp = -(1 + P7_RESTITUTION) * relV / (1 / mA + 1 / mB);
+            a.vx -= imp * nx / mA; a.vy -= imp * ny / mA;
+            b.vx += imp * nx / mB; b.vy += imp * ny / mB;
+          }
+        }
+      }
+    }
+  }
+}
+
+/* ─── Seed: spawn all bloomie piled at bottom ─── */
 function p7SeedSwarm() {
   p7Particles = [];
-  const aspect = p7W / p7H || 16 / 9;
-  const cols   = Math.round(Math.sqrt(P7_COUNT * aspect));
-  const rows   = Math.ceil(P7_COUNT / cols);
-  const cellW  = p7W / cols, cellH = p7H / rows;
+  /* stack them in a grid near the bottom center */
+  const cols = Math.ceil(Math.sqrt(P7_COUNT * 2));
+  const rows = Math.ceil(P7_COUNT / cols);
+  const cellW = Math.min(p7W * 0.8, cols * 60) / cols;
+  const startX = p7W / 2 - (cols * cellW) / 2;
+  const startY = p7H - 30;
   let made = 0;
   for (let r = 0; r < rows && made < P7_COUNT; r++) {
     for (let c = 0; c < cols && made < P7_COUNT; c++) {
-      const hx = c * cellW + Math.random() * cellW;
-      const hy = r * cellH + Math.random() * cellH;
-      p7Particles.push(new P7Bloomie(hx, hy));
+      const x = startX + c * cellW + Math.random() * cellW;
+      const y = startY - r * 45 + (Math.random() - 0.5) * 20;
+      p7Particles.push(new P7Bloomie(x, y));
       made++;
     }
   }
 }
 
-/* ─── Detect body movement via mask diff ─── */
-function p7DetectMovement() {
-  if (!p7PrevMask || !p7CurrMask) return 0;
-  let diff = 0;
-  const len = P7_MW * P7_MH;
-  for (let i = 0; i < len; i++) {
-    const a = p7PrevMask[i * 4] > 80 ? 1 : 0;
-    const b = p7CurrMask[i * 4] > 80 ? 1 : 0;
-    if (a !== b) diff++;
-  }
-  return diff / len; // 0–1 fraction of pixels that changed
-}
-
-let p7SelfieSegmentation;
-
+/* ─── Resize ─── */
 function resizeP7() {
   const prevW = p7W, prevH = p7H;
   p7W = window.innerWidth; p7H = window.innerHeight;
@@ -263,13 +236,11 @@ function resizeP7() {
   p7PersonBuf.width    = p7W; p7PersonBuf.height    = p7H;
   if (prevW && prevH && p7Particles.length) {
     const sx = p7W / prevW, sy = p7H / prevH;
-    p7Particles.forEach(p => {
-      p.x *= sx; p.y *= sy;
-      p.homeX *= sx; p.homeY *= sy;
-    });
+    p7Particles.forEach(p => { p.x *= sx; p.y *= sy; });
   }
 }
 
+/* ─── Init ─── */
 function initPage7() {
   p7Started = true;
   resizeP7();
@@ -285,10 +256,8 @@ function initPage7() {
   p7Hands = new Hands({
     locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
   });
-  p7Hands.setOptions({
-    maxNumHands: 2, modelComplexity: 1,
-    minDetectionConfidence: 0.6, minTrackingConfidence: 0.5
-  });
+  p7Hands.setOptions({ maxNumHands: 2, modelComplexity: 1,
+    minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
   p7Hands.onResults(onP7HandResults);
 
   p7Camera = new Camera(p7Video, {
@@ -301,21 +270,14 @@ function initPage7() {
   p7Camera.start().then(() => { p7Loading.style.display = 'none'; });
 }
 
+/* ─── Per-frame (called by selfie segmentation) ─── */
 function onP7SelfieResults(results) {
-  /* ── 1. Sample mask & detect movement ── */
+  /* sample mask */
   p7SampX.clearRect(0, 0, P7_MW, P7_MH);
   p7SampX.drawImage(results.segmentationMask, 0, 0, P7_MW, P7_MH);
-  const newMask = p7SampX.getImageData(0, 0, P7_MW, P7_MH).data;
+  p7MaskData = p7SampX.getImageData(0, 0, P7_MW, P7_MH).data;
 
-  p7PrevMask = p7CurrMask;
-  p7CurrMask = newMask;
-
-  /* movement intensity: 0 = still, 1 = lots of motion */
-  const rawMovement = p7DetectMovement();
-  /* smooth it — ramp up fast, decay slowly so pushes feel snappy */
-  p7BodyMoving = Math.max(p7BodyMoving * 0.75, Math.min(1, rawMovement * 18));
-
-  /* ── 2. Person cutout (mirrored) ── */
+  /* person cutout buffer (mirrored) */
   p7PersonBufCtx.clearRect(0, 0, p7W, p7H);
   p7PersonBufCtx.save();
   p7PersonBufCtx.translate(p7W, 0); p7PersonBufCtx.scale(-1, 1);
@@ -328,19 +290,20 @@ function onP7SelfieResults(results) {
   p7PersonBufCtx.restore();
   p7PersonBufCtx.globalCompositeOperation = 'source-over';
 
-  /* ── 3. Draw camera feed ── */
+  /* draw camera feed */
   p7Ctx.clearRect(0, 0, p7W, p7H);
   p7Ctx.save();
   p7Ctx.translate(p7W, 0); p7Ctx.scale(-1, 1);
   p7Ctx.drawImage(results.image, 0, 0, p7W, p7H);
   p7Ctx.restore();
 
-  /* ── 4. Update + draw bloomie ── */
+  /* update + collide + draw bloomie */
   const wScale = p7W / 800 || 1;
   for (let i = 0; i < p7Particles.length; i++) p7Particles[i].update(wScale);
+  p7ResolveCollisions(wScale);
   for (let i = 0; i < p7Particles.length; i++) p7Particles[i].draw(p7Ctx, wScale);
 
-  /* ── 5. Person on top ── */
+  /* person on top */
   p7PersonCtx.clearRect(0, 0, p7W, p7H);
   p7PersonCtx.drawImage(p7PersonBuf, 0, 0);
 }
