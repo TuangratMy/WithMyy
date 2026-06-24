@@ -2,12 +2,33 @@
    PAGE 6 — GORGEOUS PUZZLE ENGINE
    Flow: L-shape frame (hold steady to lock) → both-hand pinch hold to capture
          → 3-2-1 countdown → puzzle (snap pieces, keep captured aspect ratio)
+
+   ── FIX LOG (read this if something still feels off) ──
+   1) Hand-identity swap bug: MediaPipe does NOT guarantee multiHandLandmarks[0]
+      is always the same physical hand frame-to-frame. We now assign hands to
+      fixed Left/Right slots using results.multiHandedness, so smoothing/cursors
+      never "jump" because index 0 and 1 swapped.
+   2) Frame-lock was too strict: required 150 *consecutive* frames with both
+      hands present and <28px drift, hard-reset to 0 on any single dropped
+      frame. Real webcams drop/jitter hand detection constantly, so it almost
+      never finished. Now uses forgiving decay instead of a hard reset, and the
+      threshold is lower (still requires holding steady, just realistic).
+   3) Pinch threshold (0.045) was too tight for most hand sizes / camera
+      distances. Loosened with separate start/stop thresholds (hysteresis) so
+      pinch doesn't flicker on/off at the boundary.
+   4) Capture hold (15 consecutive frames both-pinching) had the same hard-reset
+      fragility as #2 — now uses decay too.
+   5) Camera/Hands lifecycle: the camera & ML inference used to keep running
+      forever in the background after leaving this page (see p6PauseCamera /
+      p6ResumeCamera + app.js changes). That was the main cause of global
+      slowdown/freezing across the whole site.
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
 let p6W = 0, p6H = 0, p6Started = false;
 
 let p6HandsMp, p6Camera6;
+let p6CameraRunning = false; // FIX #5: track actual running state so we can pause/resume
 
 const P6_STATE = { INTRO:'intro', HOWTO:'howto', FRAME:'frame', LOCKED:'locked', CAPTURING:'capturing', COUNTDOWN:'countdown', PUZZLE:'puzzle', WIN:'win', LOSE:'lose' };
 let p6State = P6_STATE.INTRO;
@@ -21,26 +42,36 @@ let p6CapturedImage = null; // ImageBitmap, keeps original frame aspect ratio
 let p6Pieces = [];
 let p6BoardX = 0, p6BoardY = 0, p6BoardW = 0, p6BoardH = 0;
 
-/* ── Hand smoothing (EMA) ── */
+/* ── Hand smoothing (EMA) ──
+   FIX #1: these two slots are now keyed by handedness label ('Left'/'Right'),
+   not by whatever order MediaPipe returned them in this frame. */
 const P6_SMOOTH = 0.45; // higher = snappier, lower = smoother
-let p6Hands = [
-  { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, pinchProgress:0, cooldown:0, smoothInit:false },
-  { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, pinchProgress:0, cooldown:0, smoothInit:false }
-];
+function p6MakeHandSlot() {
+  return { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, pinchProgress:0, cooldown:0, smoothInit:false, seenFrames:0 };
+}
+let p6Hands = [ p6MakeHandSlot(), p6MakeHandSlot() ]; // [0]=Left hand slot, [1]=Right hand slot (fixed)
+
 let p6DragPiece = null;
 let p6DragHandIdx = -1;
+
+/* ── Pinch thresholds with hysteresis (FIX #3) ── */
+const P6_PINCH_ON  = 0.058; // start pinching when distance drops below this
+const P6_PINCH_OFF = 0.075; // stop pinching only when distance rises above this (bigger gap = no flicker)
 
 /* ── Frame lock state ── */
 let p6FrameBox = null;        // current live box {x,y,w,h} while in FRAME state
 let p6LockedBox = null;       // box once locked (used for capture + puzzle aspect)
-let p6FrameStableFrames = 0;  // how many frames the box has stayed within tolerance
+let p6FrameStableFrames = 0;  // "progress" toward lock — now decays instead of hard-resetting (FIX #2)
 let p6FrameStableRef = null;  // reference box to compare drift against
-const P6_STABLE_NEEDED = 150; // ~5s at 30fps
-const P6_STABLE_TOLERANCE = 28; // px drift allowed
+const P6_STABLE_NEEDED = 70;  // ~2.3s at 30fps (was 150 / ~5s — too long given drop-frame reality)
+const P6_STABLE_TOLERANCE = 46; // px drift allowed (was 28 — too tight for natural hand wobble)
+const P6_STABLE_DECAY = 2;      // how much progress is lost per "bad" frame (instead of dropping to 0)
+const P6_FRAME_GRACE = 6;       // how many consecutive missed-hand frames we tolerate before resetting at all
 
 /* ── Capture confirm (post-lock pinch) ── */
 let p6CaptureHoldFrames = 0;
-const P6_CAPTURE_HOLD_NEEDED = 15; // short hold ~0.5s at 30fps
+const P6_CAPTURE_HOLD_NEEDED = 12; // short hold ~0.4s at 30fps
+const P6_CAPTURE_DECAY = 2;
 
 /* ── Countdown (now plays AFTER capture, before puzzle) ── */
 const p6CountdownSteps = [
@@ -65,16 +96,41 @@ function initPage6() {
   window.addEventListener('resize', p6ResizeCanvases);
 
   p6HandsMp = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-  p6HandsMp.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.6 });
+  p6HandsMp.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.65, minTrackingConfidence:0.55 });
   p6HandsMp.onResults(p6OnHandResults);
 
   p6Camera6 = new Camera(p6Video, {
-    onFrame: async () => { await p6HandsMp.send({ image: p6Video }); },
+    onFrame: async () => {
+      // FIX #5: guard so we never run inference while paused/not on this page,
+      // even if something forgets to call stop() first.
+      if (!p6CameraRunning) return;
+      await p6HandsMp.send({ image: p6Video });
+    },
     width:1280, height:720
   });
   p6Camera6.start();
+  p6CameraRunning = true;
   p6RenderLoop();
   p6ShowState(P6_STATE.INTRO);
+}
+
+/* ════════════════════════════
+   FIX #5: CAMERA LIFECYCLE — call these from app.js when navigating
+   away from / back to page6 so the webcam + ML model don't run forever
+   in the background on every other page of the site.
+════════════════════════════ */
+function p6PauseCamera() {
+  if (!p6Started || !p6CameraRunning) return;
+  p6CameraRunning = false;
+  if (p6Camera6 && typeof p6Camera6.stop === 'function') p6Camera6.stop();
+  clearInterval(p6TimerInterval);
+}
+
+function p6ResumeCamera() {
+  if (!p6Started) return; // not initialized yet — initPage6() will handle first run
+  if (p6CameraRunning) return;
+  p6CameraRunning = true;
+  if (p6Camera6 && typeof p6Camera6.start === 'function') p6Camera6.start();
 }
 
 function p6ResizeCanvases() {
@@ -132,14 +188,26 @@ function p6RunCountdown() {
 
 /* ════════════════════════════
    HAND RESULTS
+   FIX #1: assign each detected hand to a FIXED slot (0 = Left, 1 = Right)
+   based on MediaPipe's handedness label, instead of trusting array order.
+   Note: MediaPipe's label is from the camera's point of view; since we mirror
+   the video for display, "Left"/"Right" here just need to be *consistent*
+   frame to frame — which is exactly what was missing before.
 ════════════════════════════ */
 function p6OnHandResults(results) {
-  p6Hands.forEach(h => { h.lm = null; });
+  const seenThisFrame = [false, false];
+
   if (results.multiHandLandmarks) {
     results.multiHandLandmarks.forEach((lm, i) => {
-      if (i > 1) return;
-      const h = p6Hands[i];
+      const handedness = results.multiHandedness && results.multiHandedness[i]
+        ? results.multiHandedness[i].label // 'Left' or 'Right'
+        : (i === 0 ? 'Left' : 'Right');
+      const slot = handedness === 'Left' ? 0 : 1;
+      seenThisFrame[slot] = true;
+
+      const h = p6Hands[slot];
       h.lm = lm;
+      h.seenFrames++;
       const toC = (lx, ly) => ({ x: (1 - lx) * p6W, y: ly * p6H });
       const idx = toC(lm[8].x, lm[8].y);
       const thb = toC(lm[4].x, lm[4].y);
@@ -155,10 +223,21 @@ function p6OnHandResults(results) {
 
       const dx = lm[8].x - lm[4].x, dy = lm[8].y - lm[4].y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      h.pinchProgress = Math.max(0, Math.min(1, 1 - (dist - 0.045) / 0.03));
-      h.pinching = dist < 0.045;
+      h.pinchProgress = Math.max(0, Math.min(1, 1 - (dist - P6_PINCH_ON) / (P6_PINCH_OFF - P6_PINCH_ON)));
+
+      // Hysteresis (FIX #3): different thresholds to start vs stop a pinch
+      if (!h.pinching && dist < P6_PINCH_ON) h.pinching = true;
+      else if (h.pinching && dist > P6_PINCH_OFF) h.pinching = false;
+
       if (h.cooldown > 0) h.cooldown--;
     });
+  }
+
+  // Clear hands that weren't seen THIS frame so drawing/logic knows they're gone,
+  // but we don't wipe smoothing state — a brief drop shouldn't make the cursor
+  // "teleport" back to start when the hand reappears next frame.
+  for (let slot = 0; slot < 2; slot++) {
+    if (!seenThisFrame[slot]) p6Hands[slot].lm = null;
   }
 
   if (p6State === P6_STATE.FRAME)  { p6HandleFrameMode(); }
@@ -169,10 +248,23 @@ function p6OnHandResults(results) {
 /* ════════════════════════════
    FRAME MODE — build box from wrist/palm anchor (stable point, not fingertips)
    so the box does NOT shrink when the user pinches to confirm.
+   FIX #2: stability now decays gracefully instead of hard-resetting to 0 the
+   instant a hand briefly drops out or drifts slightly too much.
 ════════════════════════════ */
+let p6FrameMissingStreak = 0;
+
 function p6HandleFrameMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
-  if (!h0.lm || !h1.lm) { p6FrameBox = null; p6FrameStableFrames = 0; p6FrameStableRef = null; return; }
+  if (!h0.lm || !h1.lm) {
+    p6FrameMissingStreak++;
+    // Only fully reset progress after a real, sustained loss of tracking —
+    // a single dropped frame (very common) should not throw away progress.
+    if (p6FrameMissingStreak > P6_FRAME_GRACE) {
+      p6FrameBox = null; p6FrameStableFrames = 0; p6FrameStableRef = null;
+    }
+    return;
+  }
+  p6FrameMissingStreak = 0;
 
   const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
 
@@ -180,8 +272,6 @@ function p6HandleFrameMode() {
   // does not move when thumb/index pinch together, so the box stays put.
   const wrist0 = toC(h0.lm, 0);
   const wrist1 = toC(h1.lm, 0);
-  // Also include index fingertip direction so the box still feels hand-shaped,
-  // but anchor size primarily on wrist span + a fixed extension toward fingers.
   const idx0 = toC(h0.lm, 8);
   const idx1 = toC(h1.lm, 8);
 
@@ -192,7 +282,7 @@ function p6HandleFrameMode() {
 
   p6FrameBox = { x:minX, y:minY, w:maxX - minX, h:maxY - minY };
 
-  // Stability check — compare to reference box, reset if drifted too much
+  // Stability check — decay-based, not all-or-nothing (FIX #2)
   if (!p6FrameStableRef) {
     p6FrameStableRef = { ...p6FrameBox };
     p6FrameStableFrames = 1;
@@ -201,14 +291,20 @@ function p6HandleFrameMode() {
                 + Math.abs(p6FrameBox.w - p6FrameStableRef.w) + Math.abs(p6FrameBox.h - p6FrameStableRef.h);
     if (drift < P6_STABLE_TOLERANCE) {
       p6FrameStableFrames++;
+      // slowly drift the reference toward the live box so small natural sway
+      // doesn't keep counting as "drift" forever
+      p6FrameStableRef.x += (p6FrameBox.x - p6FrameStableRef.x) * 0.1;
+      p6FrameStableRef.y += (p6FrameBox.y - p6FrameStableRef.y) * 0.1;
+      p6FrameStableRef.w += (p6FrameBox.w - p6FrameStableRef.w) * 0.1;
+      p6FrameStableRef.h += (p6FrameBox.h - p6FrameStableRef.h) * 0.1;
     } else {
-      p6FrameStableRef = { ...p6FrameBox };
-      p6FrameStableFrames = 1;
+      // Lose a little progress instead of all of it
+      p6FrameStableFrames = Math.max(0, p6FrameStableFrames - P6_STABLE_DECAY);
+      if (p6FrameStableFrames === 0) p6FrameStableRef = { ...p6FrameBox };
     }
   }
 
   if (p6FrameStableFrames >= P6_STABLE_NEEDED && p6FrameBox.w > 80 && p6FrameBox.h > 80) {
-    // Lock it in — average the recent box for a clean lock
     p6LockedBox = { ...p6FrameBox };
     p6CaptureHoldFrames = 0;
     p6ShowState(P6_STATE.LOCKED);
@@ -217,6 +313,7 @@ function p6HandleFrameMode() {
 
 /* ════════════════════════════
    LOCKED MODE — box is fixed, wait for both-hand pinch hold to capture
+   FIX #4: decay instead of hard reset when pinch briefly drops.
 ════════════════════════════ */
 function p6HandleLockedMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
@@ -230,7 +327,7 @@ function p6HandleLockedMode() {
       p6DoCapture();
     }
   } else {
-    p6CaptureHoldFrames = 0;
+    p6CaptureHoldFrames = Math.max(0, p6CaptureHoldFrames - P6_CAPTURE_DECAY);
   }
 }
 
@@ -281,7 +378,6 @@ function p6StartPuzzle() {
   p6DragPiece = null;
   p6DragHandIdx = -1;
 
-  // Fit the captured aspect ratio inside ~55% of the shorter screen dimension
   const maxDim = Math.min(p6W, p6H) * 0.6;
   const aspect = p6CapturedImage.width / p6CapturedImage.height;
   let boardW, boardH;
@@ -337,7 +433,7 @@ function p6StartPuzzle() {
 /* ════════════════════════════
    PUZZLE HAND CONTROLS (smoothed cx/cy already EMA'd above)
 ════════════════════════════ */
-const SNAP_RADIUS = 55;
+const SNAP_RADIUS = 60; // slightly more forgiving than before (was 55)
 
 function p6HandlePuzzleMode() {
   p6Hands.forEach((h, hi) => {
@@ -457,7 +553,6 @@ function p6DrawFrameMode() {
     p6OCtx.beginPath(); p6OCtx.moveTo(cx+dx*cLen, cy); p6OCtx.lineTo(cx,cy); p6OCtx.lineTo(cx, cy+dy*cLen); p6OCtx.stroke();
   });
 
-  // Stability progress ring at center
   if (stableProgress > 0) {
     const arcX = x + w/2, arcY = y + h/2;
     p6OCtx.beginPath();
@@ -609,4 +704,4 @@ function p6GoHowto()      { p6ShowState(P6_STATE.HOWTO); }
 function p6GoCountdown()  { p6ShowState(P6_STATE.FRAME); } // "Ready" now starts frame mode directly
 function p6CaptureAgain() { clearInterval(p6TimerInterval); document.getElementById('p6-hud').style.display='none'; p6ShowState(P6_STATE.FRAME); }
 function p6PlayAgain()    { clearInterval(p6TimerInterval); p6ShowState(P6_STATE.FRAME); }
-function p6ForceExit()    { clearInterval(p6TimerInterval); goTo('page2'); }
+function p6ForceExit()    { clearInterval(p6TimerInterval); p6PauseCamera(); goTo('page2'); } // FIX #5: stop camera before leaving
