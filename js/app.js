@@ -18,13 +18,51 @@ function buildWiggleTitle(elId,text) {
     const s=document.createElement('span'); s.className='wiggle-title'; s.style.setProperty('--d',(Math.random()*.8).toFixed(2)+'s'); s.textContent=ch; el.appendChild(s);
   });
 }
+
+/* ════════════════════════════
+   FIX: CAMERA LIFECYCLE PER PAGE
+   ────────────────────────────
+   Every camera-based page used to leave its webcam stream + MediaPipe model
+   running forever in the background after you navigated away — there was no
+   "pause" step. Browse through a few games in one visit and you'd have
+   several ML models silently competing for CPU/GPU at once, which is what
+   made things feel like they "ค้างทุกที่" (stuck/slow everywhere).
+
+   This map says, for each page id: which function pauses its camera when you
+   LEAVE it, and which function resumes it when you ENTER it again. Pages that
+   don't define one yet (page3/4/5/7/8) just won't be paused — wire them the
+   same way once those games also expose pause/resume functions, following the
+   p6PauseCamera/p6ResumeCamera pattern in gorgeous-puzzle.js.
+════════════════════════════ */
+const PAGE_CAMERA_HOOKS = {
+  page6: { pause: 'p6PauseCamera', resume: 'p6ResumeCamera' },
+  // page3: { pause: 'p3PauseCamera', resume: 'p3ResumeCamera' },
+  // page4: { pause: 'p4PauseCamera', resume: 'p4ResumeCamera' },
+  // page5: { pause: 'p5PauseCamera', resume: 'p5ResumeCamera' },
+  // page7: { pause: 'p7PauseCamera', resume: 'p7ResumeCamera' },
+  // page8: { pause: 'p8PauseCamera', resume: 'p8ResumeCamera' },
+};
+
+let currentActivePage = null;
+
 function goTo(id) {
+  // Pause the camera of whatever page we're leaving (if it has the hook)
+  if (currentActivePage && currentActivePage !== id) {
+    const hook = PAGE_CAMERA_HOOKS[currentActivePage];
+    if (hook && typeof window[hook.pause] === 'function') window[hook.pause]();
+  }
+
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  currentActivePage = id;
+
   if(id==='page3'){ buildWiggleTitle('p3Title','Bloomie Rain'); if(!p3CameraStarted) initP3Camera(); }
   if(id==='page4'){ buildWiggleTitle('p4Title','Interactive Bloomie Rain'); if(!p4Started) initPage4(); }
   if(id==='page5'){ buildWiggleTitle('p5Title','Bloomie Rain Catcher'); if(!p5Started) initPage5(); }
-  if(id==='page6'){ buildWiggleTitle('p6Title','Gorgeous Puzzle'); if(!p6Started) initPage6(); }
+  if(id==='page6'){
+    buildWiggleTitle('p6Title','Gorgeous Puzzle');
+    if(!p6Started) initPage6(); else p6ResumeCamera(); // resume if we already initialized once before
+  }
   if(id==='page7'){ buildWiggleTitle('p7Title','Full of Bloomie'); if(!p7Started) initPage7(); }
   if(id==='page8'){ if(!p8Started) initPage8(); }
 }
