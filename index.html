@@ -259,6 +259,9 @@
   <canvas id="p6-canvas"></canvas>
   <canvas id="p6-overlay"></canvas>
 
+  <!-- Shutter flash overlay -->
+  <div id="p6-flash"></div>
+
   <!-- Header -->
   <div class="p6-header">
     <button class="p6-back" onclick="p6ForceExit()">Return to Joy</button>
@@ -273,7 +276,7 @@
   <div id="p6-hud">
     <div class="p6-hud-box">
       <div class="p6-hud-label">Time Left</div>
-      <div class="p6-hud-val" id="p6-hud-timer">1:00</div>
+      <div class="p6-hud-val" id="p6-hud-timer">1:30</div>
     </div>
     <div class="p6-hud-box">
       <div class="p6-hud-label">Pieces Placed</div>
@@ -296,15 +299,15 @@
     <div class="p6-card">
       <div class="p6-card-title">How to Play</div>
       <ul class="p6-how-list">
-        <li><span class="bullet">1</span><span>Hold both hands up with your <strong>thumb and index finger</strong> forming an L-shape.</span></li>
-        <li><span class="bullet">2</span><span>Move your hands to <strong>frame the area</strong> you want to capture.</span></li>
-        <li><span class="bullet">3</span><span><strong>Pinch both hands</strong> (index + thumb) and hold to capture the photo.</span></li>
-        <li><span class="bullet">4</span><span>The photo is automatically <strong>split into 9 puzzle pieces</strong> and shuffled.</span></li>
-        <li><span class="bullet">5</span><span><strong>Pinch</strong> a piece to pick it up, <strong>drag</strong> it to the right spot, and <strong>release</strong> to place it.</span></li>
-        <li><span class="bullet">6</span><span>Pieces will <strong>snap</strong> into place when close enough.</span></li>
-        <li><span class="bullet">7</span><span>Complete all 9 pieces <strong>within 60 seconds</strong> to win!</span></li>
+        <li><span class="bullet">1</span><span>Hold both hands up and use them to <strong>frame the area</strong> you want to capture.</span></li>
+        <li><span class="bullet">2</span><span>Hold the frame <strong>steady</strong> until the border turns green — it's locked!</span></li>
+        <li><span class="bullet">3</span><span><strong>Snap your fingers</strong> (quick pinch + release) to take the photo. ✨</span></li>
+        <li><span class="bullet">4</span><span>The photo is split into <strong>9 puzzle pieces</strong> and shuffled around the screen.</span></li>
+        <li><span class="bullet">5</span><span><strong>Pinch</strong> a piece to pick it up, <strong>drag</strong> it to the right spot, then <strong>release</strong> to place it.</span></li>
+        <li><span class="bullet">6</span><span>Pieces <strong>snap into place</strong> when they're close enough to the correct slot.</span></li>
+        <li><span class="bullet">7</span><span>Complete all 9 pieces within <strong>90 seconds</strong> to win!</span></li>
       </ul>
-      <button class="p6-card-btn green" onclick="p6GoCountdown()">Ready</button>
+      <button class="p6-card-btn green" onclick="p6GoCountdown()">Ready — Let's Go!</button>
       <button class="p6-card-btn ghost" onclick="p6ForceExit()">Return to Joy</button>
     </div>
   </div>
@@ -317,13 +320,22 @@
     </div>
   </div>
 
+  <!-- Captured image preview (shown after snap, before countdown) -->
+  <div id="p6-preview-wrap" class="p6-card-wrap" style="display:none;">
+    <div class="p6-preview-card">
+      <div class="p6-preview-label">📸 Captured!</div>
+      <img id="p6-preview-img" src="" alt="captured" />
+      <div class="p6-preview-sub">Creating your puzzle…</div>
+    </div>
+  </div>
+
   <!-- Win card -->
   <div class="p6-card-wrap" id="p6-win-wrap" style="display:none;">
     <div class="p6-card">
       <div class="p6-card-title">Puzzle Complete! 🎉</div>
       <div class="p6-result-score">9/9</div>
       <div class="p6-result-label">Pieces Placed</div>
-      <div class="p6-result-msg">Congratulations, You pieced together the gorgeous you.</div>
+      <div class="p6-result-msg">Congratulations! You pieced together the gorgeous you.</div>
       <div class="p6-result-btns">
         <button class="p6-card-btn green"  onclick="p6PlayAgain()">Play Again</button>
         <button class="p6-card-btn orange" onclick="p6ForceExit()">Back to Joy</button>
@@ -337,13 +349,16 @@
       <div class="p6-card-title">Time's Up!</div>
       <div class="p6-result-score" id="p6-lose-pieces">0</div>
       <div class="p6-result-label">out of 9 pieces placed</div>
-      <div class="p6-result-msg">Nice try. You completed <span id="p6-lose-pieces-inline">0</span>/9 pieces.</div>
+      <div class="p6-result-msg">Nice try! You completed <span id="p6-lose-pieces-inline">0</span>/9 pieces.</div>
       <div class="p6-result-btns">
         <button class="p6-card-btn green"  onclick="p6PlayAgain()">Take another look and try again</button>
         <button class="p6-card-btn orange" onclick="p6ForceExit()">Back to Joy</button>
       </div>
     </div>
   </div>
+
+  <!-- Snap hint pill (shown during frame mode) -->
+  <div id="p6-snap-hint">🤌 Snap your fingers to capture!</div>
 </div>
 
 <!-- ════ PAGE 7 — FULL OF BLOOMIE ════ -->
@@ -368,7 +383,6 @@
 
 <!-- ════ PAGE 8 — AIR DRAW ════ -->
 <div id="page8" class="page">
-  <!-- Header -->
   <div class="p8-header">
     <button class="p8-back" onclick="p8ForceExit()">◀ Return to Joy</button>
     <div class="p8-title-block">
@@ -377,15 +391,10 @@
     </div>
     <div class="p8-spacer"></div>
   </div>
-
-  <!-- Body -->
   <div class="p8-body">
-    <!-- Draw zone -->
     <div class="p8-draw-zone" id="p8-draw-zone">
       <video id="p8-video" autoplay playsinline></video>
       <canvas id="p8-canvas"></canvas>
-
-      <!-- Camera permission card -->
       <div id="p8-cam-wrap">
         <div class="p8-cam-card">
           <div class="p8-cam-icon">📷</div>
@@ -394,34 +403,23 @@
           <button class="p8-cam-btn" onclick="p8StartCamera()">Open Camera &amp; Start</button>
         </div>
       </div>
-
-      <!-- Loading -->
       <div id="p8-loading">
         <div class="load-spinner"></div>
         <div class="load-title">Starting camera...<br>Show your hand to begin!</div>
       </div>
     </div>
-
-    <!-- Right panel -->
     <div class="p8-panel">
-      <!-- Size -->
       <div style="display:flex;flex-direction:column;gap:8px;">
         <div class="ctrl-label">Size</div>
         <input type="range" class="styled-range" id="p8-size-slider" min="4" max="40" value="12">
       </div>
-
-      <!-- Paint / Eraser -->
       <div class="p8-mode-row">
         <button class="p8-mode-btn active" id="p8-btn-paint">Paint</button>
         <button class="p8-mode-btn" id="p8-btn-eraser">Eraser</button>
       </div>
-
-      <!-- Colors -->
       <hr class="ctrl-divider">
       <div class="ctrl-label">Colors</div>
       <div class="p8-color-grid" id="p8-color-grid"></div>
-
-      <!-- Actions -->
       <hr class="ctrl-divider">
       <div class="p8-action-row">
         <button class="p8-act-btn p8-btn-clear" id="p8-btn-clear">Clear</button>
