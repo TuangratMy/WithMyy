@@ -60,7 +60,7 @@ const P6_STABLE_TOLERANCE = 35;   // px drift allowed
 // A "snap" = a very fast pinch: pinch appears and releases within P6_SNAP_MAX_FRAMES,
 // after the frame has been stable (p6LockedBox is set).
 let p6SnapPinchStartFrame = -1;
-const P6_SNAP_MAX_FRAMES = 18;    // ~0.6s — must release within this window
+const P6_SNAP_MAX_FRAMES = 15;    // ~0.5s hold to capture
 let p6SnapTriggered = false;
 // We only accept snap from hand 0 (first detected hand) to avoid accidental double-fire.
 const P6_SNAP_HAND = 0;
@@ -226,12 +226,13 @@ function p6HandleFrameMode() {
 
   const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
 
-  // Use wrist (0) + index MCP (5) as stable anchors — don't shift when pinching
-  const a0 = toC(h0.lm, 0), b0 = toC(h0.lm, 5);
-  const a1 = toC(h1.lm, 0), b1 = toC(h1.lm, 5);
+  // Use thumb tip (4) + index tip (8) of each hand as frame corners
+  // — this matches the "L-shape finger frame" gesture shown in the reference video
+  const thb0 = toC(h0.lm, 4), idx0 = toC(h0.lm, 8);
+  const thb1 = toC(h1.lm, 4), idx1 = toC(h1.lm, 8);
 
-  const xs = [a0.x, b0.x, a1.x, b1.x];
-  const ys = [a0.y, b0.y, a1.y, b1.y];
+  const xs = [thb0.x, idx0.x, thb1.x, idx1.x];
+  const ys = [thb0.y, idx0.y, thb1.y, idx1.y];
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
 
@@ -263,21 +264,18 @@ function p6HandleFrameMode() {
     p6LockedBox = null; // unlock if drifted
   }
 
-  // ── Snap detection (only on hand P6_SNAP_HAND, only when frame is locked) ──
+  // ── Capture: pinch and hold for ~0.5s while frame is locked ──
   if (p6LockedBox && !p6SnapTriggered) {
-    const sh = p6Hands[P6_SNAP_HAND];
-    if (sh.lm) {
-      if (sh.pinching && p6SnapPinchStartFrame < 0) {
-        p6SnapPinchStartFrame = p6FrameCount;
-      } else if (!sh.pinching && p6SnapPinchStartFrame >= 0) {
-        const held = p6FrameCount - p6SnapPinchStartFrame;
-        if (held <= P6_SNAP_MAX_FRAMES) {
-          // Valid snap! Trigger capture.
-          p6SnapTriggered = true;
-          p6DoCapture();
-        }
-        p6SnapPinchStartFrame = -1;
+    const anyPinching = p6Hands.some(h => h.lm && h.pinching);
+    if (anyPinching) {
+      if (p6SnapPinchStartFrame < 0) p6SnapPinchStartFrame = p6FrameCount;
+      const held = p6FrameCount - p6SnapPinchStartFrame;
+      if (held >= P6_SNAP_MAX_FRAMES) {
+        p6SnapTriggered = true;
+        p6DoCapture();
       }
+    } else {
+      p6SnapPinchStartFrame = -1;
     }
   }
 }
@@ -574,14 +572,37 @@ function p6DrawFrameMode() {
   });
   p6OCtx.restore();
 
-  // Status label
+  // Pinch-hold progress arc + status label
+  const holdProgress = (p6SnapPinchStartFrame >= 0)
+    ? Math.min(1, (p6FrameCount - p6SnapPinchStartFrame) / P6_SNAP_MAX_FRAMES)
+    : 0;
+
+  if (isLocked && holdProgress > 0) {
+    // Progress ring at center of frame
+    const arcX = x + w/2, arcY = y + h/2;
+    p6OCtx.save();
+    p6OCtx.beginPath();
+    p6OCtx.arc(arcX, arcY, 36, -Math.PI/2, -Math.PI/2 + Math.PI*2*holdProgress);
+    p6OCtx.strokeStyle = 'rgba(39,207,120,0.95)';
+    p6OCtx.lineWidth = 6; p6OCtx.lineCap = 'round'; p6OCtx.stroke();
+    // Inner fill
+    p6OCtx.beginPath();
+    p6OCtx.arc(arcX, arcY, 28, 0, Math.PI*2);
+    p6OCtx.fillStyle = `rgba(39,207,120,${0.15 + holdProgress * 0.25})`;
+    p6OCtx.fill();
+    p6OCtx.restore();
+  }
+
   p6OCtx.save();
   p6OCtx.font = `700 ${Math.round(p6W/58)}px 'Manrope'`;
   p6OCtx.textAlign = 'center';
   p6OCtx.textBaseline = 'top';
-  if (isLocked) {
+  if (isLocked && holdProgress > 0) {
     p6OCtx.fillStyle = 'rgba(39,207,120,0.95)';
-    p6OCtx.fillText('✓  Frame locked — snap your fingers! 🤌', p6W/2, y + h + 14);
+    p6OCtx.fillText('📸 Capturing…', p6W/2, y + h + 14);
+  } else if (isLocked) {
+    p6OCtx.fillStyle = 'rgba(39,207,120,0.95)';
+    p6OCtx.fillText('✓  Locked! Pinch to capture 🤌', p6W/2, y + h + 14);
   } else {
     p6OCtx.fillStyle = 'rgba(255,255,255,0.85)';
     p6OCtx.fillText('Hold the frame steady…', p6W/2, y + h + 14);
