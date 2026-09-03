@@ -12,7 +12,6 @@
   let isGameComplete = false;
   let isGameStarted = false;
 
-  // Frame Boundaries (Calculated from L-Shapes)
   let frameBox = { x: 0, y: 0, width: 0, height: 0, active: false };
   let lastSnapTime = 0;
 
@@ -25,28 +24,32 @@
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // Bind Start Button Event
-    bindUIEvents();
+    // ดักจับการคลิกแบบ Event Delegation (กดปุ่มไหนใน #page6 ก็ติดแน่นอน)
+    setupClickHandlers();
   };
 
-  function bindUIEvents() {
-    // หาปุ่ม Start ทั้งหมดภายใน Page 6
-    const startBtns = document.querySelectorAll('#page6 .p6-card-btn.green, #page6 .p6-card-btn');
-    startBtns.forEach((btn) => {
-      if (btn.innerText.toLowerCase().includes('start')) {
-        btn.onclick = (e) => {
+  function setupClickHandlers() {
+    const page6 = document.getElementById('page6') || document.body;
+    page6.addEventListener('click', function (e) {
+      // ตรวจหาว่าสิ่งที่กดใช่ปุ่ม Start หรือไม่
+      const target = e.target.closest('.p6-card-btn, button');
+      if (target) {
+        const txt = target.innerText.toLowerCase();
+        if (txt.includes('start') || txt.includes('puzzle')) {
           e.preventDefault();
+          e.stopPropagation();
           startGame();
-        };
+        }
       }
     });
   }
 
   function startGame() {
-    // ซ่อน Card / Overlay Modal
+    // ซ่อน Pop-up Modal ทั้งหมดทันที
     const cardWraps = document.querySelectorAll('#page6 .p6-card-wrap');
     cardWraps.forEach((wrap) => {
       wrap.style.display = 'none';
+      wrap.style.pointerEvents = 'none';
     });
 
     // แสดง Hint Pill
@@ -102,7 +105,7 @@
           requestAnimationFrame(processVideoFrame);
         })
         .catch((err) => {
-          console.error("Camera access denied or error:", err);
+          console.error("Camera access error:", err);
         });
     }
   }
