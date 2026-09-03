@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════
-   PAGE 6 — GORGEOUS PUZZLE ENGINE (FIXED FRAME & INSTANT SNAP)
+   PAGE 6 — GORGEOUS PUZZLE ENGINE (FULL HAND LANDMARKS)
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
@@ -8,7 +8,7 @@ let p6W = 0, p6H = 0, p6Started = false;
 let p6HandsMp, p6Camera6;
 let p6CameraRunning = false;
 
-const P6_STATE = { INTRO:'intro', HOWTO:'howto', FRAME:'frame', LOCKED:'locked', CAPTURING:'capturing', COUNTDOWN:'countdown', PUZZLE:'puzzle', WIN:'win', LOSE:'lose' };
+const P6_STATE = { INTRO:'intro', HOWTO:'howto', FRAME:'frame', PUZZLE:'puzzle', WIN:'win', LOSE:'lose' };
 let p6State = P6_STATE.INTRO;
 let p6TimeLeft = 60, p6TimerInterval = null;
 let p6PiecesPlaced = 0;
@@ -20,31 +20,30 @@ let p6CapturedImage = null;
 let p6Pieces = [];
 let p6BoardX = 0, p6BoardY = 0, p6BoardW = 0, p6BoardH = 0;
 
-/* ── Hand smoothing (EMA) ── */
+/* ── Hand Slots ── */
 const P6_SMOOTH = 0.45;
 function p6MakeHandSlot() {
-  return { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, pinchProgress:0, cooldown:0, smoothInit:false, seenFrames:0 };
+  return { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, smoothInit:false, cooldown:0 };
 }
 let p6Hands = [ p6MakeHandSlot(), p6MakeHandSlot() ];
 
 let p6DragPiece = null;
 let p6DragHandIdx = -1;
 
-/* ── Pinch thresholds ── */
 const P6_PINCH_ON  = 0.058;
 const P6_PINCH_OFF = 0.075;
 
-/* ── Frame Box ── */
-let p6FrameBox = null;
 let p6LockedBox = null;
 let p6WasPinchingLastFrame = false;
 
-/* ── Countdown ── */
-const p6CountdownSteps = [
-  { num:'3', cue:'Get Ready' },
-  { num:'2', cue:'Frame your best shot.' },
-  { num:'1', cue:'Almost there.' },
-  { num:'GO', cue:'Create your puzzle.', go:true },
+// โครงสร้างเส้นเชื่อมข้อต่อนิ้วมือ (Hand Connections)
+const HAND_CONNECTIONS = [
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [17, 18], [18, 19], [19, 20],
+  [0, 17]
 ];
 
 /* ════════════════════════════
@@ -106,41 +105,17 @@ function p6ShowState(state) {
   const ids = ['p6-intro-wrap','p6-howto-wrap','p6-countdown-wrap','p6-hud','p6-win-wrap','p6-lose-wrap'];
   ids.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
-  if (state === P6_STATE.INTRO)   { document.getElementById('p6-intro-wrap').style.display = 'flex'; }
-  if (state === P6_STATE.HOWTO)   { document.getElementById('p6-howto-wrap').style.display = 'flex'; }
-  if (state === P6_STATE.FRAME)   { p6ResetFrameTracking(); }
-  if (state === P6_STATE.COUNTDOWN) { p6RunCountdown(); }
+  if (state === P6_STATE.INTRO)  { document.getElementById('p6-intro-wrap').style.display = 'flex'; }
+  if (state === P6_STATE.HOWTO)  { document.getElementById('p6-howto-wrap').style.display = 'flex'; }
+  if (state === P6_STATE.FRAME)  { p6ResetFrameTracking(); }
   if (state === P6_STATE.PUZZLE) { p6StartPuzzle(); }
-  if (state === P6_STATE.WIN)     { p6ShowWin(); }
-  if (state === P6_STATE.LOSE)    { p6ShowLose(); }
+  if (state === P6_STATE.WIN)    { p6ShowWin(); }
+  if (state === P6_STATE.LOSE)   { p6ShowLose(); }
 }
 
 function p6ResetFrameTracking() {
-  p6FrameBox = null;
   p6LockedBox = null;
   p6WasPinchingLastFrame = false;
-}
-
-/* ════════════════════════════
-   COUNTDOWN
-════════════════════════════ */
-function p6RunCountdown() {
-  const wrap = document.getElementById('p6-countdown-wrap');
-  wrap.style.display = 'flex';
-  const numEl = document.getElementById('p6-count-num');
-  const cueEl = document.getElementById('p6-count-cue');
-  let step = 0;
-  function tick() {
-    const s = p6CountdownSteps[step];
-    numEl.className = 'p6-num' + (s.go ? ' go' : '');
-    numEl.style.animation = 'none'; void numEl.offsetWidth; numEl.style.animation = '';
-    numEl.textContent = s.num;
-    cueEl.textContent = s.cue;
-    step++;
-    if (step < p6CountdownSteps.length) { setTimeout(tick, 1000); }
-    else { setTimeout(() => { wrap.style.display = 'none'; p6ShowState(P6_STATE.PUZZLE); }, 900); }
-  }
-  tick();
 }
 
 /* ════════════════════════════
@@ -159,7 +134,7 @@ function p6OnHandResults(results) {
 
       const h = p6Hands[slot];
       h.lm = lm;
-      h.seenFrames++;
+
       const toC = (lx, ly) => ({ x: (1 - lx) * p6W, y: ly * p6H });
       const idx = toC(lm[8].x, lm[8].y);
       const thb = toC(lm[4].x, lm[4].y);
@@ -174,7 +149,6 @@ function p6OnHandResults(results) {
 
       const dx = lm[8].x - lm[4].x, dy = lm[8].y - lm[4].y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      h.pinchProgress = Math.max(0, Math.min(1, 1 - (dist - P6_PINCH_ON) / (P6_PINCH_OFF - P6_PINCH_ON)));
 
       if (!h.pinching && dist < P6_PINCH_ON) h.pinching = true;
       else if (h.pinching && dist > P6_PINCH_OFF) h.pinching = false;
@@ -192,50 +166,44 @@ function p6OnHandResults(results) {
 }
 
 /* ════════════════════════════
-   FRAME MODE — สร้างกรอบเฉพาะเมื่อเจอมือทำท่า L-Shape
+   FRAME & INSTANT CAPTURE
 ════════════════════════════ */
 function p6HandleFrameMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
-  const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
-
-  let xs = [], ys = [];
-
-  // ดึงพิกัดเฉพาะมือที่กำลังแสดงอยู่หน้ากล้อง
-  if (h0.lm) {
-    const w0 = toC(h0.lm, 0), i0 = toC(h0.lm, 8), t0 = toC(h0.lm, 4);
-    xs.push(w0.x, i0.x, t0.x); ys.push(w0.y, i0.y, t0.y);
-  }
-  if (h1.lm) {
-    const w1 = toC(h1.lm, 0), i1 = toC(h1.lm, 8), t1 = toC(h1.lm, 4);
-    xs.push(w1.x, i1.x, t1.x); ys.push(w1.y, i1.y, t1.y);
-  }
-
-  // สร้างกรอบเฉพาะเมื่อเจอมือเท่านั้น (ถ้าไม่เจอมือ p6FrameBox จะเป็น null)
-  if (xs.length > 0) {
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const w = Math.max(maxX - minX, 140);
-    const h = Math.max(maxY - minY, 140);
-    p6FrameBox = { x: minX, y: minY, w: w, h: h };
-  } else {
-    p6FrameBox = null; // ไม่ขึ้นกรอบเขียวค้างไว้ถ้ายังไม่ยกมือขึ้นมา
-  }
-
-  // INSTANT SNAP: เมื่อมีการประกบนิ้ว (Pinch) สั่งแคปเจอร์ทันที
   const isPinching = (h0.lm && h0.pinching) || (h1.lm && h1.pinching);
-  if (isPinching && !p6WasPinchingLastFrame && p6FrameBox) {
-    p6LockedBox = { ...p6FrameBox };
+
+  if (isPinching && !p6WasPinchingLastFrame) {
+    const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
+    let xs = [], ys = [];
+
+    [h0, h1].forEach(h => {
+      if (h.lm) {
+        const idx = toC(h.lm, 8), thb = toC(h.lm, 4);
+        xs.push(idx.x, thb.x); ys.push(idx.y, thb.y);
+      }
+    });
+
+    if (xs.length > 0) {
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const w = Math.max(maxX - minX, 120);
+      const h = Math.max(maxY - minY, 120);
+      p6LockedBox = { x: minX, y: minY, w: w, h: h };
+    } else {
+      const size = Math.min(p6W, p6H) * 0.5;
+      p6LockedBox = { x: (p6W - size) / 2, y: (p6H - size) / 2, w: size, h: size };
+    }
+
     p6DoCapture();
   }
   p6WasPinchingLastFrame = isPinching;
 }
 
 /* ════════════════════════════
-   CAPTURE
+   CAPTURE & GO DIRECTLY TO PUZZLE
 ════════════════════════════ */
 async function p6DoCapture() {
   if (!p6LockedBox) return;
-  p6State = P6_STATE.CAPTURING;
 
   const offscreen = document.createElement('canvas');
   offscreen.width = p6Canvas.width;
@@ -260,7 +228,7 @@ async function p6DoCapture() {
   tmp.getContext('2d').putImageData(imgData, 0, 0);
   p6CapturedImage = await createImageBitmap(tmp);
 
-  p6ShowState(P6_STATE.COUNTDOWN);
+  p6ShowState(P6_STATE.PUZZLE);
 }
 
 /* ════════════════════════════
@@ -271,15 +239,22 @@ function p6StartPuzzle() {
   p6DragPiece = null;
   p6DragHandIdx = -1;
 
-  const maxDim = Math.min(p6W, p6H) * 0.6;
+  const maxW = p6W * 0.8;
+  const maxH = p6H * 0.75;
   const aspect = p6CapturedImage.width / p6CapturedImage.height;
-  let boardW, boardH;
-  if (aspect >= 1) { boardW = maxDim; boardH = maxDim / aspect; }
-  else { boardH = maxDim; boardW = maxDim * aspect; }
 
-  p6BoardW = boardW; p6BoardH = boardH;
+  let boardW = maxW;
+  let boardH = maxW / aspect;
+
+  if (boardH > maxH) {
+    boardH = maxH;
+    boardW = maxH * aspect;
+  }
+
+  p6BoardW = boardW;
+  p6BoardH = boardH;
   p6BoardX = (p6W - boardW) / 2;
-  p6BoardY = (p6H - boardH) / 2 + 20;
+  p6BoardY = (p6H - boardH) / 2 + 10;
 
   const pw = boardW / P6_GRID;
   const ph = boardH / P6_GRID;
@@ -289,7 +264,7 @@ function p6StartPuzzle() {
     for (let col = 0; col < P6_GRID; col++) {
       const id = row * P6_GRID + col;
       const angle = (id / P6_TOTAL) * Math.PI * 2;
-      const radius = Math.max(boardW, boardH) * 0.78;
+      const radius = Math.max(boardW, boardH) * 0.6;
       const tx = p6W / 2 + Math.cos(angle) * radius - pw / 2;
       const ty = p6H / 2 + Math.sin(angle) * radius - ph / 2;
       p6Pieces.push({
@@ -301,9 +276,10 @@ function p6StartPuzzle() {
       });
     }
   }
+
   p6Pieces.forEach(p => {
-    p.x = Math.max(10, Math.min(p6W - pw - 10, p.x + (Math.random() - 0.5) * pw * 0.4));
-    p.y = Math.max(80, Math.min(p6H - ph - 10, p.y + (Math.random() - 0.5) * ph * 0.4));
+    p.x = Math.max(10, Math.min(p6W - pw - 10, p.x));
+    p.y = Math.max(70, Math.min(p6H - ph - 10, p.y));
   });
 
   p6TimeLeft = 60;
@@ -324,9 +300,9 @@ function p6StartPuzzle() {
 }
 
 /* ════════════════════════════
-   PUZZLE HAND CONTROLS
+   PUZZLE CONTROLS
 ════════════════════════════ */
-const SNAP_RADIUS = 65;
+const SNAP_RADIUS = 60;
 
 function p6HandlePuzzleMode() {
   p6Hands.forEach((h, hi) => {
@@ -404,42 +380,10 @@ function p6RenderLoop() {
 
   p6OCtx.clearRect(0, 0, p6W, p6H);
 
-  if (p6State === P6_STATE.FRAME)  { p6DrawFrameMode(); p6DrawHandCursors(); }
-  if (p6State === P6_STATE.PUZZLE) { p6DrawPuzzle(); p6DrawHandCursors(); }
+  if (p6State === P6_STATE.FRAME)  { p6DrawFullHandLandmarks(); }
+  if (p6State === P6_STATE.PUZZLE) { p6DrawPuzzle(); p6DrawFullHandLandmarks(); }
 
   requestAnimationFrame(p6RenderLoop);
-}
-
-function p6DrawFrameMode() {
-  // วาดกรอบเฉพาะเมื่อ p6FrameBox ไม่เป็น null (คือเมื่อยกมือทำกรอบขึ้นมา)
-  if (!p6FrameBox) {
-    p6OCtx.save();
-    p6OCtx.fillStyle = 'rgba(255,255,255,0.9)';
-    p6OCtx.font = `600 ${Math.round(p6W / 60)}px 'Manrope'`;
-    p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'middle';
-    p6OCtx.fillText('Show your hands & frame your shot!', p6W / 2, p6H - 60);
-    p6OCtx.restore();
-    return;
-  }
-
-  const { x, y, w, h } = p6FrameBox;
-
-  p6OCtx.save();
-  p6OCtx.fillStyle = 'rgba(0,0,0,0.35)';
-  p6OCtx.fillRect(0, 0, p6W, p6H);
-  p6OCtx.clearRect(x, y, w, h);
-  p6OCtx.restore();
-
-  p6OCtx.save();
-  p6OCtx.strokeStyle = '#277f53';
-  p6OCtx.lineWidth = 3;
-  p6OCtx.strokeRect(x, y, w, h);
-
-  p6OCtx.fillStyle = 'rgba(255,255,255,0.95)';
-  p6OCtx.font = `600 ${Math.round(p6W/65)}px 'Manrope'`;
-  p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'top';
-  p6OCtx.fillText('Pinch thumb & index to Instant Snap!', p6W/2, y + h + 14);
-  p6OCtx.restore();
 }
 
 function p6DrawPuzzle() {
@@ -492,30 +436,40 @@ function p6DrawPiece(piece) {
   p6OCtx.restore();
 }
 
-function p6DrawHandCursors() {
+/* ── วาดโครงสร้างมือครบทั้ง 10 นิ้ว (Full 21 Landmarks per hand) ── */
+function p6DrawFullHandLandmarks() {
   p6Hands.forEach(h => {
     if (!h.lm) return;
-    const pf = h.pinchProgress;
-    const toC = (lm, idx) => ({ x:(1-lm[idx].x)*p6W, y:lm[idx].y*p6H });
-    const idx = toC(h.lm, 8);
-    const thb = toC(h.lm, 4);
+    const toC = (lx, ly) => ({ x: (1 - lx) * p6W, y: ly * p6H });
 
-    p6OCtx.beginPath(); p6OCtx.moveTo(idx.x, idx.y); p6OCtx.lineTo(thb.x, thb.y);
-    p6OCtx.strokeStyle = `rgba(255,255,255,${0.2+pf*0.5})`; p6OCtx.lineWidth = 2; p6OCtx.setLineDash([4,4]); p6OCtx.stroke(); p6OCtx.setLineDash([]);
+    // 1. วาดเส้นเชื่อมข้อต่อนิ้วมือ
+    p6OCtx.save();
+    p6OCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    p6OCtx.lineWidth = 2.5;
 
-    [idx, thb].forEach(tip => {
-      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 20, 0, Math.PI*2);
-      p6OCtx.fillStyle = `rgba(39,127,83,${0.1+pf*0.3})`; p6OCtx.fill();
-      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 20, -Math.PI/2, -Math.PI/2+Math.PI*2*pf);
-      p6OCtx.strokeStyle = pf > 0.85 ? '#267F53' : 'rgba(255,255,255,0.85)'; p6OCtx.lineWidth = 3; p6OCtx.lineCap = 'round'; p6OCtx.stroke();
-      p6OCtx.beginPath(); p6OCtx.arc(tip.x, tip.y, 4, 0, Math.PI*2); p6OCtx.fillStyle = '#fff'; p6OCtx.fill();
+    HAND_CONNECTIONS.forEach(([i, j]) => {
+      const p1 = toC(h.lm[i].x, h.lm[i].y);
+      const p2 = toC(h.lm[j].x, h.lm[j].y);
+      p6OCtx.beginPath();
+      p6OCtx.moveTo(p1.x, p1.y);
+      p6OCtx.lineTo(p2.x, p2.y);
+      p6OCtx.stroke();
     });
 
-    const R = h.pinching ? 15 : 11;
-    p6OCtx.beginPath(); p6OCtx.arc(h.cx, h.cy, R, 0, Math.PI*2);
-    p6OCtx.fillStyle = h.pinching ? 'rgba(39,127,83,0.9)' : 'rgba(255,255,255,0.8)'; p6OCtx.fill();
-    p6OCtx.beginPath(); p6OCtx.arc(h.cx, h.cy, R, 0, Math.PI*2);
-    p6OCtx.strokeStyle = h.pinching ? '#267F53' : 'rgba(255,255,255,0.4)'; p6OCtx.lineWidth = 2; p6OCtx.stroke();
+    // 2. วาดจุด Landmarks ทั้ง 21 จุดต่อมือ
+    h.lm.forEach((pt, idx) => {
+      const pos = toC(pt.x, pt.y);
+      p6OCtx.beginPath();
+      const isTip = [4, 8, 12, 16, 20].includes(idx); // ปลายนิ้ว
+      p6OCtx.arc(pos.x, pos.y, isTip ? 6 : 4, 0, Math.PI * 2);
+      p6OCtx.fillStyle = isTip ? '#267F53' : '#ffffff';
+      p6OCtx.fill();
+      p6OCtx.strokeStyle = 'rgba(0,0,0,0.4)';
+      p6OCtx.lineWidth = 1;
+      p6OCtx.stroke();
+    });
+
+    p6OCtx.restore();
   });
 }
 
