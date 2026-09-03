@@ -1,4 +1,4 @@
-/* ════ PAGE 6 — GORGEOUS PUZZLE (INSTANT SNAP FIX) ════ */
+/* ════ PAGE 6 — GORGEOUS PUZZLE (INSTANT SNAP & PINCH PUZZLE) ════ */
 
 (function () {
   let video, canvas, ctx;
@@ -11,11 +11,11 @@
   let isPinching = false;
   let isGameComplete = false;
 
-  // Frame Boundaries
+  // Frame Boundaries (คำนวณจาก L-Shapes)
   let frameBox = { x: 0, y: 0, width: 0, height: 0, active: false };
 
-  // Track Pinch state to trigger snap instantly on initial pinch down
-  let wasPinchingLastFrame = false;
+  // Snap Cooldown Safeguard
+  let lastSnapTime = 0;
 
   window.initGorgeousPuzzle = function () {
     video = document.getElementById('p6-video');
@@ -43,12 +43,11 @@
     gridSlots = [];
     draggedPiece = null;
     isGameComplete = false;
-    wasPinchingLastFrame = false;
 
     const hint = document.getElementById('p6-snap-hint');
     if (hint) {
       hint.style.display = 'block';
-      hint.innerText = 'Make L-shapes with hands to frame, then pinch thumb & index to Instant Snap!';
+      hint.innerText = 'ทำมือทรง L สองข้างเพื่อจัดกรอบ แล้วประกบนิ้วชี้-โป้งเพื่อ Instant Snap!';
     }
   }
 
@@ -56,7 +55,7 @@
     if (typeof Hands === 'undefined') return;
 
     hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      locateFile: (file) => https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}
     });
 
     hands.setOptions({
@@ -71,13 +70,10 @@
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
         .then((stream) => {
-          if (video) {
-            video.srcObject = stream;
-            video.play();
-          }
+          video.srcObject = stream;
+          video.play();
           requestAnimationFrame(processVideoFrame);
-        })
-        .catch((err) => console.error(err));
+        });
     }
   }
 
@@ -92,7 +88,7 @@
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw Mirrored Video
+    // วาดภาพ Camera Stream
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
@@ -116,42 +112,38 @@
     let isPinchingDetected = false;
 
     landmarksList.forEach((landmarks) => {
+      // พิกัด Mirror X
       const indexTip = { x: (1 - landmarks[8].x) * canvas.width, y: landmarks[8].y * canvas.height };
       const thumbTip = { x: (1 - landmarks[4].x) * canvas.width, y: landmarks[4].y * canvas.height };
 
       indexTips.push(indexTip);
       thumbTips.push(thumbTip);
 
-      // Distance between Thumb and Index Tip
+      // เช็ค Pinch (ระยะห่าง นิ้วชี้ กับ นิ้วโป้ง ของมือข้างเดียวกัน)
       const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
-      if (dist < 45) {
+      if (dist < 40) {
         isPinchingDetected = true;
       }
     });
 
-    // 1. Calculate Crop Box from L-Shape Gestures
+    // สร้าง Frame Crop จากการวางมือ
     if (indexTips.length >= 2) {
-      // Two hands detected -> Draw frame between hands
       const minX = Math.min(indexTips[0].x, indexTips[1].x, thumbTips[0].x, thumbTips[1].x);
       const maxX = Math.max(indexTips[0].x, indexTips[1].x, thumbTips[0].x, thumbTips[1].x);
       const minY = Math.min(indexTips[0].y, indexTips[1].y, thumbTips[0].y, thumbTips[1].y);
       const maxY = Math.max(indexTips[0].y, indexTips[1].y, thumbTips[0].y, thumbTips[1].y);
 
-      const size = Math.max(maxX - minX, maxY - minY, 180);
-      frameBox = { x: minX, y: minY, width: size, height: size, active: true };
-    } else if (indexTips.length === 1) {
-      // Single hand detected -> Box around single hand L-shape
-      const size = 260;
+      const size = Math.max(maxX - minX, maxY - minY, 200);
       frameBox = {
-        x: Math.max(10, Math.min(canvas.width - size - 10, indexTips[0].x - 40)),
-        y: Math.max(10, Math.min(canvas.height - size - 10, indexTips[0].y - 40)),
+        x: minX,
+        y: minY,
         width: size,
         height: size,
         active: true
       };
     } else {
-      // Default Center Box
-      const defaultSize = Math.min(canvas.width, canvas.height) * 0.45;
+      // Default Frame กลางจอ
+      const defaultSize = Math.min(canvas.width, canvas.height) * 0.5;
       frameBox = {
         x: (canvas.width - defaultSize) / 2,
         y: (canvas.height - defaultSize) / 2,
@@ -161,11 +153,12 @@
       };
     }
 
-    // 2. INSTANT SNAP TRIGGER (Snap Immediately as soon as fingers touch)
-    if (isPinchingDetected && !wasPinchingLastFrame) {
+    // INSTANT SNAP: เมื่อมีการประกบนิ้ว (Pinch) โดยไม่รอเวลา
+    const now = Date.now();
+    if (isPinchingDetected && (now - lastSnapTime > 1000)) {
+      lastSnapTime = now;
       triggerInstantSnap();
     }
-    wasPinchingLastFrame = isPinchingDetected;
   }
 
   function drawFrameOverlay() {
@@ -177,14 +170,14 @@
   }
 
   function triggerInstantSnap() {
-    // Flash Effect
+    // Shutter Flash Effect
     const flash = document.getElementById('p6-flash');
     if (flash) {
       flash.style.opacity = '1';
       setTimeout(() => flash.style.opacity = '0', 100);
     }
 
-    // Capture Canvas Image inside Frame
+    // Crop Image จาก Frame
     const offCanvas = document.createElement('canvas');
     offCanvas.width = frameBox.width;
     offCanvas.height = frameBox.height;
@@ -203,7 +196,7 @@
 
     const hint = document.getElementById('p6-snap-hint');
     if (hint) {
-      hint.innerText = 'Pinch thumb & index to pick up and drag puzzle pieces!';
+      hint.innerText = 'ใช้นิ้วหนีบ (Pinch) เพื่อจับจิ๊กซอว์ ลากไปวางในกรอบให้ถูกต้อง!';
     }
   }
 
@@ -216,6 +209,7 @@
     const cols = 3;
     const pieceSize = frameBox.width / cols;
 
+    // สร้าง Target Grid Slots ในกรอบ Frame
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         gridSlots.push({
@@ -228,6 +222,7 @@
       }
     }
 
+    // ตัดชิ้นส่วนจิ๊กซอว์ 9 ชิ้น
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const pCanvas = document.createElement('canvas');
@@ -241,11 +236,12 @@
           0, 0, pieceSize, pieceSize
         );
 
+        // วางกระจายอยู่นอกกรอบ Frame
         const spawnSide = Math.random() > 0.5 ? 'left' : 'right';
         const rx = spawnSide === 'left'
-          ? Math.random() * Math.max(10, frameBox.x - pieceSize - 20)
-          : frameBox.x + frameBox.width + 20 + Math.random() * Math.max(10, canvas.width - frameBox.x - frameBox.width - pieceSize - 20);
-        const ry = Math.random() * (canvas.height - pieceSize - 60) + 30;
+          ? Math.random() * (frameBox.x - pieceSize - 20)
+          : frameBox.x + frameBox.width + 20 + Math.random() * (canvas.width - frameBox.x - frameBox.width - pieceSize - 20);
+        const ry = Math.random() * (canvas.height - pieceSize - 40) + 20;
 
         puzzlePieces.push({
           id: r * cols + c,
@@ -279,6 +275,7 @@
 
     if (currentlyPinching) {
       if (!isPinching) {
+        // เลือกชิ้นส่วนที่อยู่ใกล้นิ้วที่สุด
         draggedPiece = puzzlePieces.find((p) =>
           !p.isLocked &&
           pinchX >= p.x && pinchX <= p.x + p.size &&
@@ -292,6 +289,7 @@
       }
       isPinching = true;
     } else {
+      // ปล่อยมือ -> Check Snap ลง Slot
       if (draggedPiece) {
         const slot = gridSlots.find((s) => s.id === draggedPiece.id);
         if (slot) {
@@ -300,6 +298,7 @@
             (draggedPiece.y + draggedPiece.size / 2) - (slot.y + slot.size / 2)
           );
 
+          // ระยะ Snap เข้าร่อง
           if (distToSlot < slot.size * 0.6) {
             draggedPiece.x = slot.x;
             draggedPiece.y = slot.y;
@@ -313,6 +312,7 @@
       isPinching = false;
     }
 
+    // วาด Pointer จุดเชื่อมระหว่างนิ้วชี้-โป้ง
     ctx.fillStyle = currentlyPinching ? '#e74c3c' : '#277f53';
     ctx.beginPath();
     ctx.arc(pinchX, pinchY, 10, 0, Math.PI * 2);
@@ -320,30 +320,16 @@
   }
 
   function drawPuzzleBoard() {
+    // วาดกรอบเป้าหมาย 3x3
     gridSlots.forEach((slot) => {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
       ctx.lineWidth = 2;
       ctx.strokeRect(slot.x, slot.y, slot.size, slot.size);
     });
 
+    // วาดชิ้นส่วน Puzzle
     puzzlePieces.forEach((p) => {
       ctx.drawImage(p.img, p.x, p.y, p.size, p.size);
 
       ctx.strokeStyle = p.isLocked ? '#277f53' : 'rgba(255,255,255,0.8)';
-      ctx.lineWidth = p.isLocked ? 3 : 1.5;
-      ctx.strokeRect(p.x, p.y, p.size, p.size);
-    });
-  }
-
-  function checkVictory() {
-    const allLocked = puzzlePieces.every((p) => p.isLocked);
-    if (allLocked && !isGameComplete) {
-      isGameComplete = true;
-      const hint = document.getElementById('p6-snap-hint');
-      if (hint) {
-        hint.innerText = '🎉 Gorgeous Puzzle Completed! ✨';
-      }
-    }
-  }
-
-})();
+      ctx.lineWidth = p.isLoc
