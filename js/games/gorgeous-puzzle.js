@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════
-   PAGE 6 — GORGEOUS PUZZLE ENGINE (LOVE GESTURE SNAP & NO CHECKMARK)
+   PAGE 6 — GORGEOUS PUZZLE ENGINE (WITH RE-TAKE BUTTON)
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
@@ -121,6 +121,20 @@ function p6ResetFrameTracking() {
 }
 
 /* ════════════════════════════
+   RE-TAKE PHOTO FUNCTIONALITY
+════════════════════════════ */
+window.p6RetakePhoto = function() {
+  clearInterval(p6TimerInterval);
+  p6CapturedImage = null;
+  p6Pieces = [];
+  p6PiecesPlaced = 0;
+  p6DragPiece = null;
+  p6DragHandIdx = -1;
+  document.getElementById('p6-hud').style.display = 'none';
+  p6ShowState(P6_STATE.FRAME);
+};
+
+/* ════════════════════════════
    HAND RESULTS & LOVE GESTURE DETECT
 ════════════════════════════ */
 function p6OnHandResults(results) {
@@ -155,7 +169,7 @@ function p6OnHandResults(results) {
       if (!h.pinching && dist < P6_PINCH_ON) h.pinching = true;
       else if (h.pinching && dist > P6_PINCH_OFF) h.pinching = false;
 
-      // เช็คท่าชูนาน/ก้อย 🤟 (Love Gesture): โป้ง(4), ชี้(8), ก้อย(20) เหยียดออก / กลาง(12), นาง(16) งอพับลง
+      // เช็คท่าชูนาน/ก้อย 🤟 (Love Gesture)
       const isIndexExtended = lm[8].y < lm[6].y;
       const isPinkyExtended = lm[20].y < lm[18].y;
       const isMiddleFolded  = lm[12].y > lm[10].y;
@@ -179,7 +193,7 @@ function p6OnHandResults(results) {
 }
 
 /* ════════════════════════════
-   1. FRAME MODE & INSTANT SNAP (PINCH & LOVE GESTURE 🤟)
+   FRAME MODE & INSTANT SNAP
 ════════════════════════════ */
 function p6HandleFrameMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
@@ -203,7 +217,6 @@ function p6HandleFrameMode() {
     p6FrameBox = null;
   }
 
-  // Snap ได้จากทั้ง "การประกบนิ้ว (Pinch)" หรือ "การชูท่า 🤟 (Love Gesture)" มือข้างไหนก็ได้!
   const isPinching = (h0.lm && h0.pinching) || (h1.lm && h1.pinching);
   const isLoveGesture = (h0.lm && h0.loveGesture) || (h1.lm && h1.loveGesture);
   const isSnapGesture = isPinching || isLoveGesture;
@@ -221,7 +234,7 @@ function p6HandleFrameMode() {
 }
 
 /* ════════════════════════════
-   2. CAPTURE & AUTO ASPECT SCALE
+   CAPTURE & AUTO ASPECT SCALE
 ════════════════════════════ */
 async function p6DoCapture() {
   if (!p6LockedBox) return;
@@ -470,7 +483,6 @@ function p6DrawPuzzle() {
   if (p6DragPiece) p6DrawPiece(p6DragPiece);
 }
 
-/* ── วาดชิ้นส่วน Puzzle (เอาติ๊กถูกออกเรียบร้อย) ── */
 function p6DrawPiece(piece) {
   const { col, row, x, y, w, h, placed, dragging } = piece;
   p6OCtx.save();
@@ -490,11 +502,10 @@ function p6DrawPiece(piece) {
   p6OCtx.lineWidth = placed ? 2 : 1.5;
   p6OCtx.strokeRect(x, y, w, h);
 
-  // ตัดส่วนวาดวงกลมและติ๊กถูกออก เพื่อไม่ให้บังรูป
   p6OCtx.restore();
 }
 
-/* ── วาดจุดและเส้นข้อต่อนิ้วมือแบบครบถ้วน ── */
+/* ── วาดจุดและเส้นข้อต่อนิ้วมือ ── */
 function p6DrawFullHandLandmarks() {
   p6Hands.forEach(h => {
     if (!h.lm) return;
@@ -547,6 +558,6 @@ function p6ShowLose() {
 function p6GoIntro()      { clearInterval(p6TimerInterval); p6ShowState(P6_STATE.INTRO); }
 function p6GoHowto()      { p6ShowState(P6_STATE.HOWTO); }
 function p6GoCountdown()  { p6ShowState(P6_STATE.FRAME); }
-function p6CaptureAgain() { clearInterval(p6TimerInterval); document.getElementById('p6-hud').style.display='none'; p6ShowState(P6_STATE.FRAME); }
-function p6PlayAgain()    { clearInterval(p6TimerInterval); p6ShowState(P6_STATE.FRAME); }
+function p6CaptureAgain() { p6RetakePhoto(); }
+function p6PlayAgain()    { p6RetakePhoto(); }
 function p6ForceExit()    { clearInterval(p6TimerInterval); p6PauseCamera(); if (typeof goTo === 'function') goTo('page2'); }
