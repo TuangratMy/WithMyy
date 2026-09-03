@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════
-   PAGE 6 — GORGEOUS PUZZLE ENGINE (INSTANT SNAP FIX)
+   PAGE 6 — GORGEOUS PUZZLE ENGINE (FIXED FRAME & INSTANT SNAP)
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
@@ -37,7 +37,7 @@ const P6_PINCH_OFF = 0.075;
 /* ── Frame Box ── */
 let p6FrameBox = null;
 let p6LockedBox = null;
-let p6WasPinchingLastFrame = false; // สำหรับ Instant Snap
+let p6WasPinchingLastFrame = false;
 
 /* ── Countdown ── */
 const p6CountdownSteps = [
@@ -192,7 +192,7 @@ function p6OnHandResults(results) {
 }
 
 /* ════════════════════════════
-   FRAME MODE & INSTANT SNAP FIX
+   FRAME MODE — สร้างกรอบเฉพาะเมื่อเจอมือทำท่า L-Shape
 ════════════════════════════ */
 function p6HandleFrameMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
@@ -200,7 +200,7 @@ function p6HandleFrameMode() {
 
   let xs = [], ys = [];
 
-  // สร้างกรอบจากมือที่ตรวจจับได้
+  // ดึงพิกัดเฉพาะมือที่กำลังแสดงอยู่หน้ากล้อง
   if (h0.lm) {
     const w0 = toC(h0.lm, 0), i0 = toC(h0.lm, 8), t0 = toC(h0.lm, 4);
     xs.push(w0.x, i0.x, t0.x); ys.push(w0.y, i0.y, t0.y);
@@ -210,21 +210,20 @@ function p6HandleFrameMode() {
     xs.push(w1.x, i1.x, t1.x); ys.push(w1.y, i1.y, t1.y);
   }
 
+  // สร้างกรอบเฉพาะเมื่อเจอมือเท่านั้น (ถ้าไม่เจอมือ p6FrameBox จะเป็น null)
   if (xs.length > 0) {
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const w = Math.max(maxX - minX, 150);
-    const h = Math.max(maxY - minY, 150);
+    const w = Math.max(maxX - minX, 140);
+    const h = Math.max(maxY - minY, 140);
     p6FrameBox = { x: minX, y: minY, w: w, h: h };
   } else {
-    // Default Frame ถ้าไม่เจอมือ
-    const defaultSize = Math.min(p6W, p6H) * 0.5;
-    p6FrameBox = { x: (p6W - defaultSize)/2, y: (p6H - defaultSize)/2, w: defaultSize, h: defaultSize };
+    p6FrameBox = null; // ไม่ขึ้นกรอบเขียวค้างไว้ถ้ายังไม่ยกมือขึ้นมา
   }
 
-  // INSTANT SNAP: เมื่อมีการประกบนิ้ว (Pinch) ชิ้นส่วน สั่งแคปเจอร์ทันทีไม่ต้องรอ
+  // INSTANT SNAP: เมื่อมีการประกบนิ้ว (Pinch) สั่งแคปเจอร์ทันที
   const isPinching = (h0.lm && h0.pinching) || (h1.lm && h1.pinching);
-  if (isPinching && !p6WasPinchingLastFrame) {
+  if (isPinching && !p6WasPinchingLastFrame && p6FrameBox) {
     p6LockedBox = { ...p6FrameBox };
     p6DoCapture();
   }
@@ -412,7 +411,17 @@ function p6RenderLoop() {
 }
 
 function p6DrawFrameMode() {
-  if (!p6FrameBox) return;
+  // วาดกรอบเฉพาะเมื่อ p6FrameBox ไม่เป็น null (คือเมื่อยกมือทำกรอบขึ้นมา)
+  if (!p6FrameBox) {
+    p6OCtx.save();
+    p6OCtx.fillStyle = 'rgba(255,255,255,0.9)';
+    p6OCtx.font = `600 ${Math.round(p6W / 60)}px 'Manrope'`;
+    p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'middle';
+    p6OCtx.fillText('Show your hands & frame your shot!', p6W / 2, p6H - 60);
+    p6OCtx.restore();
+    return;
+  }
+
   const { x, y, w, h } = p6FrameBox;
 
   p6OCtx.save();
