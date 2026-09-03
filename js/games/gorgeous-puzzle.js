@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════
-   PAGE 6 — GORGEOUS PUZZLE ENGINE (FULL HAND LANDMARKS)
+   PAGE 6 — GORGEOUS PUZZLE ENGINE (FINAL PERFECT FIX)
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
@@ -33,10 +33,11 @@ let p6DragHandIdx = -1;
 const P6_PINCH_ON  = 0.058;
 const P6_PINCH_OFF = 0.075;
 
+let p6FrameBox = null;
 let p6LockedBox = null;
 let p6WasPinchingLastFrame = false;
 
-// โครงสร้างเส้นเชื่อมข้อต่อนิ้วมือ (Hand Connections)
+// เส้นเชื่อมข้อต่อนิ้วมือครบ 10 นิ้ว
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -114,6 +115,7 @@ function p6ShowState(state) {
 }
 
 function p6ResetFrameTracking() {
+  p6FrameBox = null;
   p6LockedBox = null;
   p6WasPinchingLastFrame = false;
 }
@@ -166,41 +168,48 @@ function p6OnHandResults(results) {
 }
 
 /* ════════════════════════════
-   FRAME & INSTANT CAPTURE
+   1. FRAME MODE & INSTANT SNAP
 ════════════════════════════ */
 function p6HandleFrameMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
+  const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
+
+  let xs = [], ys = [];
+  [h0, h1].forEach(h => {
+    if (h.lm) {
+      const idx = toC(h.lm, 8), thb = toC(h.lm, 4);
+      xs.push(idx.x, thb.x); ys.push(idx.y, thb.y);
+    }
+  });
+
+  // คำนวณขอบเขตของกรอบ Frame ตามตำแหน่งนิ้ว
+  if (xs.length > 0) {
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const w = Math.max(maxX - minX, 120);
+    const h = Math.max(maxY - minY, 120);
+    p6FrameBox = { x: minX, y: minY, w: w, h: h };
+  } else {
+    p6FrameBox = null;
+  }
+
   const isPinching = (h0.lm && h0.pinching) || (h1.lm && h1.pinching);
 
+  // ประกบนิ้วชี้-โป้ง -> Snap ทันที
   if (isPinching && !p6WasPinchingLastFrame) {
-    const toC = (lm, idx) => ({ x: (1 - lm[idx].x) * p6W, y: lm[idx].y * p6H });
-    let xs = [], ys = [];
-
-    [h0, h1].forEach(h => {
-      if (h.lm) {
-        const idx = toC(h.lm, 8), thb = toC(h.lm, 4);
-        xs.push(idx.x, thb.x); ys.push(idx.y, thb.y);
-      }
-    });
-
-    if (xs.length > 0) {
-      const minX = Math.min(...xs), maxX = Math.max(...xs);
-      const minY = Math.min(...ys), maxY = Math.max(...ys);
-      const w = Math.max(maxX - minX, 120);
-      const h = Math.max(maxY - minY, 120);
-      p6LockedBox = { x: minX, y: minY, w: w, h: h };
+    if (p6FrameBox) {
+      p6LockedBox = { ...p6FrameBox };
     } else {
-      const size = Math.min(p6W, p6H) * 0.5;
+      const size = Math.min(p6W, p6H) * 0.45;
       p6LockedBox = { x: (p6W - size) / 2, y: (p6H - size) / 2, w: size, h: size };
     }
-
     p6DoCapture();
   }
   p6WasPinchingLastFrame = isPinching;
 }
 
 /* ════════════════════════════
-   CAPTURE & GO DIRECTLY TO PUZZLE
+   2. CAPTURE & AUTO ASPECT SCALE
 ════════════════════════════ */
 async function p6DoCapture() {
   if (!p6LockedBox) return;
@@ -232,23 +241,24 @@ async function p6DoCapture() {
 }
 
 /* ════════════════════════════
-   PUZZLE SETUP
+   PUZZLE SETUP (ขนาดพอดี ไม่ใหญ่เกินไป)
 ════════════════════════════ */
 function p6StartPuzzle() {
   p6PiecesPlaced = 0;
   p6DragPiece = null;
   p6DragHandIdx = -1;
 
-  const maxW = p6W * 0.8;
-  const maxH = p6H * 0.75;
+  // ปรับขนาดให้อยู่ในสเกลพอดีหน้าจอ (~55% ของหน้าจอ)
+  const targetScale = Math.min(p6W, p6H) * 0.55;
   const aspect = p6CapturedImage.width / p6CapturedImage.height;
 
-  let boardW = maxW;
-  let boardH = maxW / aspect;
-
-  if (boardH > maxH) {
-    boardH = maxH;
-    boardW = maxH * aspect;
+  let boardW, boardH;
+  if (aspect >= 1) {
+    boardW = targetScale;
+    boardH = targetScale / aspect;
+  } else {
+    boardH = targetScale;
+    boardW = targetScale * aspect;
   }
 
   p6BoardW = boardW;
@@ -264,7 +274,7 @@ function p6StartPuzzle() {
     for (let col = 0; col < P6_GRID; col++) {
       const id = row * P6_GRID + col;
       const angle = (id / P6_TOTAL) * Math.PI * 2;
-      const radius = Math.max(boardW, boardH) * 0.6;
+      const radius = Math.max(boardW, boardH) * 0.7;
       const tx = p6W / 2 + Math.cos(angle) * radius - pw / 2;
       const ty = p6H / 2 + Math.sin(angle) * radius - ph / 2;
       p6Pieces.push({
@@ -300,9 +310,9 @@ function p6StartPuzzle() {
 }
 
 /* ════════════════════════════
-   PUZZLE CONTROLS
+   3. EASY SNAP PUZZLE CONTROLS
 ════════════════════════════ */
-const SNAP_RADIUS = 60;
+const SNAP_RADIUS = 100; // ขยายระยะดูดเข้ากรอบให้กว้างขึ้น ดูดง่ายขึ้นเยอะ!
 
 function p6HandlePuzzleMode() {
   p6Hands.forEach((h, hi) => {
@@ -323,8 +333,10 @@ function p6HandlePuzzleMode() {
       p6DragPiece.x = h.cx - p6DragPiece.w / 2;
       p6DragPiece.y = h.cy - p6DragPiece.h / 2;
 
+      // ตรวจสอบการ Snap ระหว่างลากตลอดเวลา
+      p6TrySnap(p6DragPiece);
+
       if (!nowPinch && h.lastPinch) {
-        p6TrySnap(p6DragPiece);
         p6DragPiece.dragging = false;
         p6DragPiece = null;
         p6DragHandIdx = -1;
@@ -340,17 +352,26 @@ function p6PieceAt(cx, cy) {
   for (let i = p6Pieces.length - 1; i >= 0; i--) {
     const p = p6Pieces[i];
     if (p.placed) continue;
-    if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) return p;
+    if (cx >= p.x - 15 && cx <= p.x + p.w + 15 && cy >= p.y - 15 && cy <= p.y + p.h + 15) return p;
   }
   return null;
 }
 
 function p6TrySnap(piece) {
+  if (piece.placed) return;
   const cx = piece.x + piece.w / 2, cy = piece.y + piece.h / 2;
   const snapCx = piece.snapX + piece.w / 2, snapCy = piece.snapY + piece.h / 2;
   const dist = Math.hypot(cx - snapCx, cy - snapCy);
+
+  // ถ้าเฉียดเข้าใกลักรอบตามรัศมีที่กำหนด ให้ Snap ลงล็อกทันที
   if (dist < SNAP_RADIUS) {
-    piece.x = piece.snapX; piece.y = piece.snapY; piece.placed = true;
+    piece.x = piece.snapX;
+    piece.y = piece.snapY;
+    piece.placed = true;
+    piece.dragging = false;
+    p6DragPiece = null;
+    p6DragHandIdx = -1;
+
     p6PiecesPlaced++;
     document.getElementById('p6-hud-pieces').textContent = p6PiecesPlaced + '/' + P6_TOTAL;
     if (p6PiecesPlaced === P6_TOTAL) {
@@ -380,10 +401,43 @@ function p6RenderLoop() {
 
   p6OCtx.clearRect(0, 0, p6W, p6H);
 
-  if (p6State === P6_STATE.FRAME)  { p6DrawFullHandLandmarks(); }
+  if (p6State === P6_STATE.FRAME)  { p6DrawFrameMode(); p6DrawFullHandLandmarks(); }
   if (p6State === P6_STATE.PUZZLE) { p6DrawPuzzle(); p6DrawFullHandLandmarks(); }
 
   requestAnimationFrame(p6RenderLoop);
+}
+
+/* ── วาดกรอบ Frame แบบมีมุม ── */
+function p6DrawFrameMode() {
+  if (!p6FrameBox) return;
+
+  const { x, y, w, h } = p6FrameBox;
+
+  p6OCtx.save();
+  p6OCtx.fillStyle = 'rgba(0,0,0,0.35)';
+  p6OCtx.fillRect(0, 0, p6W, p6H);
+  p6OCtx.clearRect(x, y, w, h);
+  p6OCtx.restore();
+
+  p6OCtx.save();
+  p6OCtx.strokeStyle = 'rgba(39,127,83,0.95)';
+  p6OCtx.lineWidth = 3;
+  p6OCtx.strokeRect(x, y, w, h);
+
+  const cLen = 20;
+  const corners = [[x,y],[x+w,y],[x,y+h],[x+w,y+h]];
+  const dirs = [[1,1],[-1,1],[1,-1],[-1,-1]];
+  p6OCtx.lineWidth = 4;
+  corners.forEach(([cx,cy], i) => {
+    const [dx,dy] = dirs[i];
+    p6OCtx.beginPath(); p6OCtx.moveTo(cx+dx*cLen, cy); p6OCtx.lineTo(cx,cy); p6OCtx.lineTo(cx, cy+dy*cLen); p6OCtx.stroke();
+  });
+
+  p6OCtx.fillStyle = 'rgba(255,255,255,0.95)';
+  p6OCtx.font = `600 ${Math.round(p6W/65)}px 'Manrope'`;
+  p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'top';
+  p6OCtx.fillText('Pinch thumb & index to Instant Snap!', p6W/2, y + h + 14);
+  p6OCtx.restore();
 }
 
 function p6DrawPuzzle() {
@@ -436,16 +490,15 @@ function p6DrawPiece(piece) {
   p6OCtx.restore();
 }
 
-/* ── วาดโครงสร้างมือครบทั้ง 10 นิ้ว (Full 21 Landmarks per hand) ── */
+/* ── วาดจุดและเส้นข้อต่อนิ้วมือแบบครบถ้วน ── */
 function p6DrawFullHandLandmarks() {
   p6Hands.forEach(h => {
     if (!h.lm) return;
     const toC = (lx, ly) => ({ x: (1 - lx) * p6W, y: ly * p6H });
 
-    // 1. วาดเส้นเชื่อมข้อต่อนิ้วมือ
     p6OCtx.save();
     p6OCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-    p6OCtx.lineWidth = 2.5;
+    p6OCtx.lineWidth = 2;
 
     HAND_CONNECTIONS.forEach(([i, j]) => {
       const p1 = toC(h.lm[i].x, h.lm[i].y);
@@ -456,15 +509,14 @@ function p6DrawFullHandLandmarks() {
       p6OCtx.stroke();
     });
 
-    // 2. วาดจุด Landmarks ทั้ง 21 จุดต่อมือ
     h.lm.forEach((pt, idx) => {
       const pos = toC(pt.x, pt.y);
       p6OCtx.beginPath();
-      const isTip = [4, 8, 12, 16, 20].includes(idx); // ปลายนิ้ว
-      p6OCtx.arc(pos.x, pos.y, isTip ? 6 : 4, 0, Math.PI * 2);
+      const isTip = [4, 8, 12, 16, 20].includes(idx);
+      p6OCtx.arc(pos.x, pos.y, isTip ? 5 : 3.5, 0, Math.PI * 2);
       p6OCtx.fillStyle = isTip ? '#267F53' : '#ffffff';
       p6OCtx.fill();
-      p6OCtx.strokeStyle = 'rgba(0,0,0,0.4)';
+      p6OCtx.strokeStyle = 'rgba(0,0,0,0.3)';
       p6OCtx.lineWidth = 1;
       p6OCtx.stroke();
     });
