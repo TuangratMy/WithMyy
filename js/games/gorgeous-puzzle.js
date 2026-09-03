@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════
-   PAGE 6 — GORGEOUS PUZZLE ENGINE (FINAL PERFECT FIX)
+   PAGE 6 — GORGEOUS PUZZLE ENGINE (LOVE GESTURE SNAP & NO CHECKMARK)
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
@@ -23,7 +23,7 @@ let p6BoardX = 0, p6BoardY = 0, p6BoardW = 0, p6BoardH = 0;
 /* ── Hand Slots ── */
 const P6_SMOOTH = 0.45;
 function p6MakeHandSlot() {
-  return { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, lastPinch:false, smoothInit:false, cooldown:0 };
+  return { lm:null, rawCx:0, rawCy:0, cx:0, cy:0, pinching:false, loveGesture:false, lastPinch:false, smoothInit:false, cooldown:0 };
 }
 let p6Hands = [ p6MakeHandSlot(), p6MakeHandSlot() ];
 
@@ -35,7 +35,7 @@ const P6_PINCH_OFF = 0.075;
 
 let p6FrameBox = null;
 let p6LockedBox = null;
-let p6WasPinchingLastFrame = false;
+let p6WasSnapGestureLastFrame = false;
 
 // เส้นเชื่อมข้อต่อนิ้วมือครบ 10 นิ้ว
 const HAND_CONNECTIONS = [
@@ -117,11 +117,11 @@ function p6ShowState(state) {
 function p6ResetFrameTracking() {
   p6FrameBox = null;
   p6LockedBox = null;
-  p6WasPinchingLastFrame = false;
+  p6WasSnapGestureLastFrame = false;
 }
 
 /* ════════════════════════════
-   HAND RESULTS
+   HAND RESULTS & LOVE GESTURE DETECT
 ════════════════════════════ */
 function p6OnHandResults(results) {
   const seenThisFrame = [false, false];
@@ -155,12 +155,23 @@ function p6OnHandResults(results) {
       if (!h.pinching && dist < P6_PINCH_ON) h.pinching = true;
       else if (h.pinching && dist > P6_PINCH_OFF) h.pinching = false;
 
+      // เช็คท่าชูนาน/ก้อย 🤟 (Love Gesture): โป้ง(4), ชี้(8), ก้อย(20) เหยียดออก / กลาง(12), นาง(16) งอพับลง
+      const isIndexExtended = lm[8].y < lm[6].y;
+      const isPinkyExtended = lm[20].y < lm[18].y;
+      const isMiddleFolded  = lm[12].y > lm[10].y;
+      const isRingFolded    = lm[16].y > lm[14].y;
+
+      h.loveGesture = isIndexExtended && isPinkyExtended && isMiddleFolded && isRingFolded;
+
       if (h.cooldown > 0) h.cooldown--;
     });
   }
 
   for (let slot = 0; slot < 2; slot++) {
-    if (!seenThisFrame[slot]) p6Hands[slot].lm = null;
+    if (!seenThisFrame[slot]) {
+      p6Hands[slot].lm = null;
+      p6Hands[slot].loveGesture = false;
+    }
   }
 
   if (p6State === P6_STATE.FRAME)  { p6HandleFrameMode(); }
@@ -168,7 +179,7 @@ function p6OnHandResults(results) {
 }
 
 /* ════════════════════════════
-   1. FRAME MODE & INSTANT SNAP
+   1. FRAME MODE & INSTANT SNAP (PINCH & LOVE GESTURE 🤟)
 ════════════════════════════ */
 function p6HandleFrameMode() {
   const h0 = p6Hands[0], h1 = p6Hands[1];
@@ -182,7 +193,6 @@ function p6HandleFrameMode() {
     }
   });
 
-  // คำนวณขอบเขตของกรอบ Frame ตามตำแหน่งนิ้ว
   if (xs.length > 0) {
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
@@ -193,10 +203,12 @@ function p6HandleFrameMode() {
     p6FrameBox = null;
   }
 
+  // Snap ได้จากทั้ง "การประกบนิ้ว (Pinch)" หรือ "การชูท่า 🤟 (Love Gesture)" มือข้างไหนก็ได้!
   const isPinching = (h0.lm && h0.pinching) || (h1.lm && h1.pinching);
+  const isLoveGesture = (h0.lm && h0.loveGesture) || (h1.lm && h1.loveGesture);
+  const isSnapGesture = isPinching || isLoveGesture;
 
-  // ประกบนิ้วชี้-โป้ง -> Snap ทันที
-  if (isPinching && !p6WasPinchingLastFrame) {
+  if (isSnapGesture && !p6WasSnapGestureLastFrame) {
     if (p6FrameBox) {
       p6LockedBox = { ...p6FrameBox };
     } else {
@@ -205,7 +217,7 @@ function p6HandleFrameMode() {
     }
     p6DoCapture();
   }
-  p6WasPinchingLastFrame = isPinching;
+  p6WasSnapGestureLastFrame = isSnapGesture;
 }
 
 /* ════════════════════════════
@@ -241,14 +253,13 @@ async function p6DoCapture() {
 }
 
 /* ════════════════════════════
-   PUZZLE SETUP (ขนาดพอดี ไม่ใหญ่เกินไป)
+   PUZZLE SETUP
 ════════════════════════════ */
 function p6StartPuzzle() {
   p6PiecesPlaced = 0;
   p6DragPiece = null;
   p6DragHandIdx = -1;
 
-  // ปรับขนาดให้อยู่ในสเกลพอดีหน้าจอ (~55% ของหน้าจอ)
   const targetScale = Math.min(p6W, p6H) * 0.55;
   const aspect = p6CapturedImage.width / p6CapturedImage.height;
 
@@ -310,9 +321,9 @@ function p6StartPuzzle() {
 }
 
 /* ════════════════════════════
-   3. EASY SNAP PUZZLE CONTROLS
+   EASY SNAP PUZZLE CONTROLS
 ════════════════════════════ */
-const SNAP_RADIUS = 100; // ขยายระยะดูดเข้ากรอบให้กว้างขึ้น ดูดง่ายขึ้นเยอะ!
+const SNAP_RADIUS = 100;
 
 function p6HandlePuzzleMode() {
   p6Hands.forEach((h, hi) => {
@@ -333,7 +344,6 @@ function p6HandlePuzzleMode() {
       p6DragPiece.x = h.cx - p6DragPiece.w / 2;
       p6DragPiece.y = h.cy - p6DragPiece.h / 2;
 
-      // ตรวจสอบการ Snap ระหว่างลากตลอดเวลา
       p6TrySnap(p6DragPiece);
 
       if (!nowPinch && h.lastPinch) {
@@ -363,7 +373,6 @@ function p6TrySnap(piece) {
   const snapCx = piece.snapX + piece.w / 2, snapCy = piece.snapY + piece.h / 2;
   const dist = Math.hypot(cx - snapCx, cy - snapCy);
 
-  // ถ้าเฉียดเข้าใกลักรอบตามรัศมีที่กำหนด ให้ Snap ลงล็อกทันที
   if (dist < SNAP_RADIUS) {
     piece.x = piece.snapX;
     piece.y = piece.snapY;
@@ -407,7 +416,6 @@ function p6RenderLoop() {
   requestAnimationFrame(p6RenderLoop);
 }
 
-/* ── วาดกรอบ Frame แบบมีมุม ── */
 function p6DrawFrameMode() {
   if (!p6FrameBox) return;
 
@@ -436,7 +444,7 @@ function p6DrawFrameMode() {
   p6OCtx.fillStyle = 'rgba(255,255,255,0.95)';
   p6OCtx.font = `600 ${Math.round(p6W/65)}px 'Manrope'`;
   p6OCtx.textAlign = 'center'; p6OCtx.textBaseline = 'top';
-  p6OCtx.fillText('Pinch thumb & index to Instant Snap!', p6W/2, y + h + 14);
+  p6OCtx.fillText('Pinch or Show 🤟 Gesture to Instant Snap!', p6W/2, y + h + 14);
   p6OCtx.restore();
 }
 
@@ -462,6 +470,7 @@ function p6DrawPuzzle() {
   if (p6DragPiece) p6DrawPiece(p6DragPiece);
 }
 
+/* ── วาดชิ้นส่วน Puzzle (เอาติ๊กถูกออกเรียบร้อย) ── */
 function p6DrawPiece(piece) {
   const { col, row, x, y, w, h, placed, dragging } = piece;
   p6OCtx.save();
@@ -481,12 +490,7 @@ function p6DrawPiece(piece) {
   p6OCtx.lineWidth = placed ? 2 : 1.5;
   p6OCtx.strokeRect(x, y, w, h);
 
-  if (placed) {
-    p6OCtx.fillStyle = 'rgba(39,127,83,0.85)';
-    p6OCtx.beginPath(); p6OCtx.arc(x+w-14, y+14, 11, 0, Math.PI*2); p6OCtx.fill();
-    p6OCtx.strokeStyle = '#fff'; p6OCtx.lineWidth = 2.5; p6OCtx.lineCap = 'round';
-    p6OCtx.beginPath(); p6OCtx.moveTo(x+w-19, y+14); p6OCtx.lineTo(x+w-14, y+19); p6OCtx.lineTo(x+w-8, y+9); p6OCtx.stroke();
-  }
+  // ตัดส่วนวาดวงกลมและติ๊กถูกออก เพื่อไม่ให้บังรูป
   p6OCtx.restore();
 }
 
