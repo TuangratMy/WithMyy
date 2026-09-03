@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════
-   PAGE 6 — GORGEOUS PUZZLE ENGINE (WITH RE-TAKE BUTTON)
+   PAGE 6 — GORGEOUS PUZZLE ENGINE (AUTO RE-TAKE BUTTON)
 ══════════════════════════════════════════════ */
 
 let p6Video, p6Canvas, p6Ctx, p6Overlay, p6OCtx;
@@ -106,6 +106,9 @@ function p6ShowState(state) {
   const ids = ['p6-intro-wrap','p6-howto-wrap','p6-countdown-wrap','p6-hud','p6-win-wrap','p6-lose-wrap'];
   ids.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
+  // ซ่อนปุ่ม Re-take ถ้าไม่อยู่ในหน้า Puzzle
+  p6ToggleRetakeBtn(state === P6_STATE.PUZZLE);
+
   if (state === P6_STATE.INTRO)  { document.getElementById('p6-intro-wrap').style.display = 'flex'; }
   if (state === P6_STATE.HOWTO)  { document.getElementById('p6-howto-wrap').style.display = 'flex'; }
   if (state === P6_STATE.FRAME)  { p6ResetFrameTracking(); }
@@ -121,8 +124,48 @@ function p6ResetFrameTracking() {
 }
 
 /* ════════════════════════════
-   RE-TAKE PHOTO FUNCTIONALITY
+   CREATE & CONTROL RE-TAKE BUTTON (ขวาบน ใต้กล่องคะแนน)
 ════════════════════════════ */
+function p6ToggleRetakeBtn(show) {
+  let btn = document.getElementById('p6-retake-btn-dynamic');
+  if (!btn && show) {
+    btn = document.createElement('button');
+    btn.id = 'p6-retake-btn-dynamic';
+    btn.innerText = '📷 RE-TAKE PHOTO';
+    
+    // แต่ง CSS ให้อยู่ใต้กล่อง PIECES PLACED ขวาบนสวยๆ
+    btn.style.position = 'absolute';
+    btn.style.top = '165px';
+    btn.style.right = '28px';
+    btn.style.zIndex = '30';
+    btn.style.background = 'rgba(38,127,83,0.9)';
+    btn.style.color = '#ffffff';
+    btn.style.fontFamily = 'var(--font-b, sans-serif)';
+    btn.style.fontSize = '0.75rem';
+    btn.style.fontWeight = '800';
+    btn.style.padding = '10px 18px';
+    btn.style.borderRadius = '12px';
+    btn.style.border = '1px solid rgba(255,255,255,0.2)';
+    btn.style.cursor = 'pointer';
+    btn.style.backdropFilter = 'blur(10px)';
+    btn.style.boxShadow = '0 4px 15px rgba(0,0,0,0.3)';
+    btn.style.letterSpacing = '0.05em';
+    btn.style.pointerEvents = 'auto';
+    
+    btn.onclick = (e) => {
+      e.preventDefault();
+      p6RetakePhoto();
+    };
+
+    const page6El = document.getElementById('page6') || document.body;
+    page6El.appendChild(btn);
+  }
+
+  if (btn) {
+    btn.style.display = show ? 'block' : 'none';
+  }
+}
+
 window.p6RetakePhoto = function() {
   clearInterval(p6TimerInterval);
   p6CapturedImage = null;
@@ -169,7 +212,6 @@ function p6OnHandResults(results) {
       if (!h.pinching && dist < P6_PINCH_ON) h.pinching = true;
       else if (h.pinching && dist > P6_PINCH_OFF) h.pinching = false;
 
-      // เช็คท่าชูนาน/ก้อย 🤟 (Love Gesture)
       const isIndexExtended = lm[8].y < lm[6].y;
       const isPinkyExtended = lm[20].y < lm[18].y;
       const isMiddleFolded  = lm[12].y > lm[10].y;
