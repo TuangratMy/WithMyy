@@ -10,11 +10,10 @@
   let draggedPiece = null;
   let isPinching = false;
   let isGameComplete = false;
+  let isGameStarted = false;
 
   // Frame Boundaries (Calculated from L-Shapes)
   let frameBox = { x: 0, y: 0, width: 0, height: 0, active: false };
-
-  // Snap Cooldown Safeguard
   let lastSnapTime = 0;
 
   window.initGorgeousPuzzle = function () {
@@ -26,9 +25,41 @@
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
+    // Bind Start Button Event
+    bindUIEvents();
+  };
+
+  function bindUIEvents() {
+    // หาปุ่ม Start ทั้งหมดภายใน Page 6
+    const startBtns = document.querySelectorAll('#page6 .p6-card-btn.green, #page6 .p6-card-btn');
+    startBtns.forEach((btn) => {
+      if (btn.innerText.toLowerCase().includes('start')) {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          startGame();
+        };
+      }
+    });
+  }
+
+  function startGame() {
+    // ซ่อน Card / Overlay Modal
+    const cardWraps = document.querySelectorAll('#page6 .p6-card-wrap');
+    cardWraps.forEach((wrap) => {
+      wrap.style.display = 'none';
+    });
+
+    // แสดง Hint Pill
+    const hint = document.getElementById('p6-snap-hint');
+    if (hint) {
+      hint.style.display = 'block';
+      hint.innerText = 'Form L-shapes with both hands to frame, then pinch thumb & index for Instant Snap!';
+    }
+
+    isGameStarted = true;
     setupMediaPipe();
     resetGame();
-  };
+  }
 
   function resizeCanvas() {
     if (!canvas) return;
@@ -43,12 +74,6 @@
     gridSlots = [];
     draggedPiece = null;
     isGameComplete = false;
-
-    const hint = document.getElementById('p6-snap-hint');
-    if (hint) {
-      hint.style.display = 'block';
-      hint.innerText = 'Form L-shapes with both hands to frame, then pinch thumb & index for Instant Snap!';
-    }
   }
 
   function setupMediaPipe() {
@@ -70,18 +95,25 @@
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
         .then((stream) => {
-          video.srcObject = stream;
-          video.play();
+          if (video) {
+            video.srcObject = stream;
+            video.play();
+          }
           requestAnimationFrame(processVideoFrame);
+        })
+        .catch((err) => {
+          console.error("Camera access denied or error:", err);
         });
     }
   }
 
   async function processVideoFrame() {
-    if (video && video.readyState >= 2) {
+    if (isGameStarted && video && video.readyState >= 2) {
       await hands.send({ image: video });
     }
-    requestAnimationFrame(processVideoFrame);
+    if (isGameStarted) {
+      requestAnimationFrame(processVideoFrame);
+    }
   }
 
   function onResults(results) {
@@ -112,21 +144,18 @@
     let isPinchingDetected = false;
 
     landmarksList.forEach((landmarks) => {
-      // Mirror X coordinates
       const indexTip = { x: (1 - landmarks[8].x) * canvas.width, y: landmarks[8].y * canvas.height };
       const thumbTip = { x: (1 - landmarks[4].x) * canvas.width, y: landmarks[4].y * canvas.height };
 
       indexTips.push(indexTip);
       thumbTips.push(thumbTip);
 
-      // Check Pinch gesture (Distance between Thumb Tip & Index Tip)
       const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
       if (dist < 40) {
         isPinchingDetected = true;
       }
     });
 
-    // Create Crop Frame from hands
     if (indexTips.length >= 2) {
       const minX = Math.min(indexTips[0].x, indexTips[1].x, thumbTips[0].x, thumbTips[1].x);
       const maxX = Math.max(indexTips[0].x, indexTips[1].x, thumbTips[0].x, thumbTips[1].x);
@@ -142,7 +171,6 @@
         active: true
       };
     } else {
-      // Default Center Frame
       const defaultSize = Math.min(canvas.width, canvas.height) * 0.5;
       frameBox = {
         x: (canvas.width - defaultSize) / 2,
@@ -153,7 +181,6 @@
       };
     }
 
-    // INSTANT SNAP: Triggers immediately on Pinch without delay
     const now = Date.now();
     if (isPinchingDetected && (now - lastSnapTime > 1000)) {
       lastSnapTime = now;
@@ -170,14 +197,12 @@
   }
 
   function triggerInstantSnap() {
-    // Shutter Flash Effect
     const flash = document.getElementById('p6-flash');
     if (flash) {
       flash.style.opacity = '1';
       setTimeout(() => flash.style.opacity = '0', 100);
     }
 
-    // Crop Image from Frame
     const offCanvas = document.createElement('canvas');
     offCanvas.width = frameBox.width;
     offCanvas.height = frameBox.height;
@@ -209,7 +234,6 @@
     const cols = 3;
     const pieceSize = frameBox.width / cols;
 
-    // Create Target Grid Slots inside Frame
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         gridSlots.push({
@@ -222,7 +246,6 @@
       }
     }
 
-    // Slice image into 9 puzzle pieces
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const pCanvas = document.createElement('canvas');
@@ -236,7 +259,6 @@
           0, 0, pieceSize, pieceSize
         );
 
-        // Randomly spawn pieces outside the main frame
         const spawnSide = Math.random() > 0.5 ? 'left' : 'right';
         const rx = spawnSide === 'left'
           ? Math.random() * (frameBox.x - pieceSize - 20)
@@ -275,7 +297,6 @@
 
     if (currentlyPinching) {
       if (!isPinching) {
-        // Select nearest piece under pinch coordinates
         draggedPiece = puzzlePieces.find((p) =>
           !p.isLocked &&
           pinchX >= p.x && pinchX <= p.x + p.size &&
@@ -289,7 +310,6 @@
       }
       isPinching = true;
     } else {
-      // Release pinch -> Check Snap to Slot
       if (draggedPiece) {
         const slot = gridSlots.find((s) => s.id === draggedPiece.id);
         if (slot) {
@@ -298,7 +318,6 @@
             (draggedPiece.y + draggedPiece.size / 2) - (slot.y + slot.size / 2)
           );
 
-          // Snap threshold distance
           if (distToSlot < slot.size * 0.6) {
             draggedPiece.x = slot.x;
             draggedPiece.y = slot.y;
@@ -312,7 +331,6 @@
       isPinching = false;
     }
 
-    // Draw Pinch Pointer
     ctx.fillStyle = currentlyPinching ? '#e74c3c' : '#277f53';
     ctx.beginPath();
     ctx.arc(pinchX, pinchY, 10, 0, Math.PI * 2);
@@ -320,14 +338,12 @@
   }
 
   function drawPuzzleBoard() {
-    // Draw 3x3 Target Frame Grid Slots
     gridSlots.forEach((slot) => {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
       ctx.lineWidth = 2;
       ctx.strokeRect(slot.x, slot.y, slot.size, slot.size);
     });
 
-    // Draw Puzzle Pieces
     puzzlePieces.forEach((p) => {
       ctx.drawImage(p.img, p.x, p.y, p.size, p.size);
 
@@ -343,7 +359,7 @@
       isGameComplete = true;
       const hint = document.getElementById('p6-snap-hint');
       if (hint) {
-        hint.innerText = '🎉 Congrat! You completed your Gorgeous puzzle! ✨';
+        hint.innerText = '🎉 Congrat! You completed your gorgeous puzzle! ✨';
       }
     }
   }
