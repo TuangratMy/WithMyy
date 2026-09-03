@@ -1,4 +1,4 @@
-/* ════ PAGE 6 — GORGEOUS PUZZLE (INSTANT SNAP & PINCH PUZZLE) ════ */
+/* ════ PAGE 6 — GORGEOUS PUZZLE (INSTANT SNAP FIX) ════ */
 
 (function () {
   let video, canvas, ctx;
@@ -10,10 +10,12 @@
   let draggedPiece = null;
   let isPinching = false;
   let isGameComplete = false;
-  let isGameStarted = false;
 
+  // Frame Boundaries
   let frameBox = { x: 0, y: 0, width: 0, height: 0, active: false };
-  let lastSnapTime = 0;
+
+  // Track Pinch state to trigger snap instantly on initial pinch down
+  let wasPinchingLastFrame = false;
 
   window.initGorgeousPuzzle = function () {
     video = document.getElementById('p6-video');
@@ -24,45 +26,9 @@
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // ดักจับการคลิกแบบ Event Delegation (กดปุ่มไหนใน #page6 ก็ติดแน่นอน)
-    setupClickHandlers();
-  };
-
-  function setupClickHandlers() {
-    const page6 = document.getElementById('page6') || document.body;
-    page6.addEventListener('click', function (e) {
-      // ตรวจหาว่าสิ่งที่กดใช่ปุ่ม Start หรือไม่
-      const target = e.target.closest('.p6-card-btn, button');
-      if (target) {
-        const txt = target.innerText.toLowerCase();
-        if (txt.includes('start') || txt.includes('puzzle')) {
-          e.preventDefault();
-          e.stopPropagation();
-          startGame();
-        }
-      }
-    });
-  }
-
-  function startGame() {
-    // ซ่อน Pop-up Modal ทั้งหมดทันที
-    const cardWraps = document.querySelectorAll('#page6 .p6-card-wrap');
-    cardWraps.forEach((wrap) => {
-      wrap.style.display = 'none';
-      wrap.style.pointerEvents = 'none';
-    });
-
-    // แสดง Hint Pill
-    const hint = document.getElementById('p6-snap-hint');
-    if (hint) {
-      hint.style.display = 'block';
-      hint.innerText = 'Form L-shapes with both hands to frame, then pinch thumb & index for Instant Snap!';
-    }
-
-    isGameStarted = true;
     setupMediaPipe();
     resetGame();
-  }
+  };
 
   function resizeCanvas() {
     if (!canvas) return;
@@ -77,6 +43,13 @@
     gridSlots = [];
     draggedPiece = null;
     isGameComplete = false;
+    wasPinchingLastFrame = false;
+
+    const hint = document.getElementById('p6-snap-hint');
+    if (hint) {
+      hint.style.display = 'block';
+      hint.innerText = 'Make L-shapes with hands to frame, then pinch thumb & index to Instant Snap!';
+    }
   }
 
   function setupMediaPipe() {
@@ -104,26 +77,22 @@
           }
           requestAnimationFrame(processVideoFrame);
         })
-        .catch((err) => {
-          console.error("Camera access error:", err);
-        });
+        .catch((err) => console.error(err));
     }
   }
 
   async function processVideoFrame() {
-    if (isGameStarted && video && video.readyState >= 2) {
+    if (video && video.readyState >= 2) {
       await hands.send({ image: video });
     }
-    if (isGameStarted) {
-      requestAnimationFrame(processVideoFrame);
-    }
+    requestAnimationFrame(processVideoFrame);
   }
 
   function onResults(results) {
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw Camera Stream (Mirrored)
+    // Draw Mirrored Video
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
@@ -153,28 +122,36 @@
       indexTips.push(indexTip);
       thumbTips.push(thumbTip);
 
+      // Distance between Thumb and Index Tip
       const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
-      if (dist < 40) {
+      if (dist < 45) {
         isPinchingDetected = true;
       }
     });
 
+    // 1. Calculate Crop Box from L-Shape Gestures
     if (indexTips.length >= 2) {
+      // Two hands detected -> Draw frame between hands
       const minX = Math.min(indexTips[0].x, indexTips[1].x, thumbTips[0].x, thumbTips[1].x);
       const maxX = Math.max(indexTips[0].x, indexTips[1].x, thumbTips[0].x, thumbTips[1].x);
       const minY = Math.min(indexTips[0].y, indexTips[1].y, thumbTips[0].y, thumbTips[1].y);
       const maxY = Math.max(indexTips[0].y, indexTips[1].y, thumbTips[0].y, thumbTips[1].y);
 
-      const size = Math.max(maxX - minX, maxY - minY, 200);
+      const size = Math.max(maxX - minX, maxY - minY, 180);
+      frameBox = { x: minX, y: minY, width: size, height: size, active: true };
+    } else if (indexTips.length === 1) {
+      // Single hand detected -> Box around single hand L-shape
+      const size = 260;
       frameBox = {
-        x: minX,
-        y: minY,
+        x: Math.max(10, Math.min(canvas.width - size - 10, indexTips[0].x - 40)),
+        y: Math.max(10, Math.min(canvas.height - size - 10, indexTips[0].y - 40)),
         width: size,
         height: size,
         active: true
       };
     } else {
-      const defaultSize = Math.min(canvas.width, canvas.height) * 0.5;
+      // Default Center Box
+      const defaultSize = Math.min(canvas.width, canvas.height) * 0.45;
       frameBox = {
         x: (canvas.width - defaultSize) / 2,
         y: (canvas.height - defaultSize) / 2,
@@ -184,11 +161,11 @@
       };
     }
 
-    const now = Date.now();
-    if (isPinchingDetected && (now - lastSnapTime > 1000)) {
-      lastSnapTime = now;
+    // 2. INSTANT SNAP TRIGGER (Snap Immediately as soon as fingers touch)
+    if (isPinchingDetected && !wasPinchingLastFrame) {
       triggerInstantSnap();
     }
+    wasPinchingLastFrame = isPinchingDetected;
   }
 
   function drawFrameOverlay() {
@@ -200,12 +177,14 @@
   }
 
   function triggerInstantSnap() {
+    // Flash Effect
     const flash = document.getElementById('p6-flash');
     if (flash) {
       flash.style.opacity = '1';
       setTimeout(() => flash.style.opacity = '0', 100);
     }
 
+    // Capture Canvas Image inside Frame
     const offCanvas = document.createElement('canvas');
     offCanvas.width = frameBox.width;
     offCanvas.height = frameBox.height;
@@ -224,7 +203,7 @@
 
     const hint = document.getElementById('p6-snap-hint');
     if (hint) {
-      hint.innerText = 'Pinch to pick up puzzle pieces and drag them into the frame!';
+      hint.innerText = 'Pinch thumb & index to pick up and drag puzzle pieces!';
     }
   }
 
@@ -264,9 +243,9 @@
 
         const spawnSide = Math.random() > 0.5 ? 'left' : 'right';
         const rx = spawnSide === 'left'
-          ? Math.random() * (frameBox.x - pieceSize - 20)
-          : frameBox.x + frameBox.width + 20 + Math.random() * (canvas.width - frameBox.x - frameBox.width - pieceSize - 20);
-        const ry = Math.random() * (canvas.height - pieceSize - 40) + 20;
+          ? Math.random() * Math.max(10, frameBox.x - pieceSize - 20)
+          : frameBox.x + frameBox.width + 20 + Math.random() * Math.max(10, canvas.width - frameBox.x - frameBox.width - pieceSize - 20);
+        const ry = Math.random() * (canvas.height - pieceSize - 60) + 30;
 
         puzzlePieces.push({
           id: r * cols + c,
@@ -362,7 +341,7 @@
       isGameComplete = true;
       const hint = document.getElementById('p6-snap-hint');
       if (hint) {
-        hint.innerText = '🎉 Congrat! You completed your gorgeous puzzle! ✨';
+        hint.innerText = '🎉 Gorgeous Puzzle Completed! ✨';
       }
     }
   }
